@@ -104,11 +104,15 @@ function displayAssessment(assessment) {
     const classification = assessment.classification;
     const security = assessment.security_posture;
     const trustScore = assessment.trust_score;
+    const securityPractices = assessment.security_practices;
+    const incidents = assessment.incidents;
+    const dataCompliance = assessment.data_compliance;
+    const deploymentControls = assessment.deployment_controls;
     const alternatives = assessment.alternatives;
     const recommendations = assessment.recommendations;
     
     // Build trust score color
-    const score = trustScore.score;
+    const score = trustScore.total_score;
     let scoreColor = '#27ae60';
     if (score < 40) scoreColor = '#c33';
     else if (score < 60) scoreColor = '#e67e22';
@@ -123,13 +127,150 @@ function displayAssessment(assessment) {
         </div>
         
         <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-            <h3>Trust Score</h3>
+            <h3>🎯 Trust Score (Rule-Based)</h3>
             <div style="font-size: 3rem; font-weight: bold; color: ${scoreColor}; margin: 1rem 0;">
                 ${score}/100
             </div>
             <p><strong>Risk Level:</strong> <span class="badge ${trustScore.risk_level}">${trustScore.risk_level.toUpperCase()}</span></p>
             <p><strong>Confidence:</strong> ${trustScore.confidence}</p>
-            <p style="margin-top: 1rem;">${trustScore.rationale}</p>
+            
+            <details open style="margin-top: 1.5rem;">
+                <summary style="cursor: pointer; font-weight: bold; font-size: 1.1rem; margin-bottom: 1rem;">
+                    📊 Scoring Breakdown - How is this calculated?
+                </summary>
+                <div style="background: white; padding: 1rem; border-radius: 6px;">
+                    <p style="margin-bottom: 1rem; color: #666;">
+                        This score uses <strong>transparent rule-based calculations</strong> - not AI-generated scores. 
+                        Each component has fixed weights and deterministic formulas.
+                    </p>
+                    
+                    ${Object.entries(trustScore.components).map(([key, comp]) => {
+                        const scorePercentage = (comp.score / comp.max_points * 100).toFixed(0);
+                        const barColor = scorePercentage > 70 ? '#27ae60' : scorePercentage > 50 ? '#f39c12' : '#c33';
+                        return `
+                        <div style="margin-bottom: 1.5rem; padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                <div>
+                                    <strong style="text-transform: capitalize;">${key.replace(/_/g, ' ')}</strong>
+                                    <span style="background: #667eea; color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;">
+                                        ${comp.weight_percentage}% weight
+                                    </span>
+                                </div>
+                                <span style="font-size: 1.2rem; font-weight: bold; color: ${barColor};">
+                                    ${comp.score.toFixed(1)}/${comp.max_points} pts
+                                </span>
+                            </div>
+                            <div style="background: #ddd; height: 20px; border-radius: 10px; overflow: hidden; margin-bottom: 0.5rem;">
+                                <div style="background: ${barColor}; height: 100%; width: ${scorePercentage}%; transition: width 0.3s;"></div>
+                            </div>
+                            <div style="font-size: 0.9rem; color: #666;">
+                                ${comp.explanation}
+                            </div>
+                        </div>
+                    `}).join('')}
+                    
+                    <div style="margin-top: 1rem; padding: 1rem; background: #e8f4f8; border-radius: 6px; border-left: 4px solid #3498db;">
+                        <strong>Calculation Method:</strong> ${trustScore.calculation_method}
+                    </div>
+                </div>
+            </details>
+        </div>
+        
+        <div style="margin-bottom: 2rem;">
+            <h3>🔒 Security Practices</h3>
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px;">
+                <p><strong>Overall Rating:</strong> <span class="badge">${securityPractices.rating.toUpperCase()}</span></p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1rem 0;">
+                    <div>
+                        <strong>Bug Bounty:</strong> ${securityPractices.bug_bounty === true ? '✅ Yes' : securityPractices.bug_bounty === false ? '❌ No' : '❓ Unknown'}
+                    </div>
+                    <div>
+                        <strong>Disclosure Policy:</strong> ${securityPractices.disclosure_policy === true ? '✅ Yes' : securityPractices.disclosure_policy === false ? '❌ No' : '❓ Unknown'}
+                    </div>
+                    <div>
+                        <strong>Security Team:</strong> ${securityPractices.security_team_visible === true ? '✅ Visible' : securityPractices.security_team_visible === false ? '❌ Not Visible' : '❓ Unknown'}
+                    </div>
+                    <div>
+                        <strong>Patch Cadence:</strong> ${securityPractices.patch_cadence}
+                    </div>
+                </div>
+                <p style="margin-top: 1rem;">${securityPractices.summary}</p>
+            </div>
+        </div>
+        
+        ${incidents.count > 0 || incidents.severity !== 'none' ? `
+            <div style="margin-bottom: 2rem;">
+                <h3>⚠️ Security Incidents & Abuse Signals</h3>
+                <div style="background: ${incidents.severity === 'high' || incidents.severity === 'critical' ? '#fee' : '#fef8e7'}; 
+                            padding: 1.5rem; border-radius: 8px; border-left: 4px solid ${incidents.severity === 'high' || incidents.severity === 'critical' ? '#c33' : '#f39c12'};">
+                    <p><strong>Incident Count:</strong> ${incidents.count}</p>
+                    <p><strong>Severity:</strong> <span class="badge ${incidents.severity}">${incidents.severity.toUpperCase()}</span></p>
+                    <p><strong>Rating:</strong> ${incidents.rating.toUpperCase()}</p>
+                    <p style="margin-top: 1rem;">${incidents.summary}</p>
+                    ${incidents.incidents && incidents.incidents.length > 0 ? `
+                        <details style="margin-top: 1rem;">
+                            <summary style="cursor: pointer; font-weight: bold;">View Incident Details</summary>
+                            <ul style="margin-top: 0.5rem;">
+                                ${incidents.incidents.map(inc => `<li>${JSON.stringify(inc)}</li>`).join('')}
+                            </ul>
+                        </details>
+                    ` : ''}
+                </div>
+            </div>
+        ` : ''}
+        
+        <div style="margin-bottom: 2rem;">
+            <h3>📋 Data Handling & Compliance</h3>
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px;">
+                <p><strong>Compliance Status:</strong> <span class="badge ${dataCompliance.status === 'compliant' ? 'low' : dataCompliance.status === 'partial' ? 'medium' : 'high'}">
+                    ${dataCompliance.status.toUpperCase()}
+                </span></p>
+                <p><strong>GDPR Compliant:</strong> ${dataCompliance.gdpr_compliant === true ? '✅ Yes' : dataCompliance.gdpr_compliant === false ? '❌ No' : '❓ Unknown'}</p>
+                <p><strong>Privacy Rating:</strong> ${dataCompliance.privacy_rating.toUpperCase()}</p>
+                ${dataCompliance.certifications && dataCompliance.certifications.length > 0 ? `
+                    <p><strong>Certifications:</strong> ${dataCompliance.certifications.join(', ')}</p>
+                ` : ''}
+                <p><strong>Data Residency:</strong> ${dataCompliance.data_residency}</p>
+                <p style="margin-top: 1rem;">${dataCompliance.summary}</p>
+            </div>
+        </div>
+        
+        <div style="margin-bottom: 2rem;">
+            <h3>🛠️ Deployment & Admin Controls</h3>
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px;">
+                <p><strong>Control Rating:</strong> <span class="badge">${deploymentControls.control_rating.toUpperCase()}</span></p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin: 1rem 0;">
+                    <div>
+                        <strong>SSO Support:</strong> ${deploymentControls.sso_support === true ? '✅ Yes' : deploymentControls.sso_support === false ? '❌ No' : '❓ Unknown'}
+                    </div>
+                    <div>
+                        <strong>MFA Support:</strong> ${deploymentControls.mfa_support === true ? '✅ Yes' : deploymentControls.mfa_support === false ? '❌ No' : '❓ Unknown'}
+                    </div>
+                    <div>
+                        <strong>RBAC Available:</strong> ${deploymentControls.rbac_available === true ? '✅ Yes' : deploymentControls.rbac_available === false ? '❌ No' : '❓ Unknown'}
+                    </div>
+                    <div>
+                        <strong>Audit Logging:</strong> ${deploymentControls.audit_logging === true ? '✅ Yes' : deploymentControls.audit_logging === false ? '❌ No' : '❓ Unknown'}
+                    </div>
+                </div>
+                ${deploymentControls.key_features && deploymentControls.key_features.length > 0 ? `
+                    <div style="margin-top: 1rem;">
+                        <strong>Key Features:</strong>
+                        <ul>
+                            ${deploymentControls.key_features.map(f => `<li>${f}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+                ${deploymentControls.limitations && deploymentControls.limitations.length > 0 ? `
+                    <div style="margin-top: 1rem;">
+                        <strong>Limitations:</strong>
+                        <ul>
+                            ${deploymentControls.limitations.map(l => `<li>${l}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : ''}
+                <p style="margin-top: 1rem;">${deploymentControls.summary}</p>
+            </div>
         </div>
         
         <div style="margin-bottom: 2rem;">
@@ -208,21 +349,47 @@ function displayAssessment(assessment) {
                 <h3>📚 Evidence & Citations</h3>
                 <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px;">
                     ${assessment.evidence_summary ? `
-                        <div style="margin-bottom: 1rem; padding: 1rem; background: white; border-radius: 6px;">
-                            <strong>Evidence Summary:</strong>
-                            <div style="margin-top: 0.5rem;">
-                                Total Evidence Items: <strong>${assessment.evidence_summary.total_items}</strong> |
-                                Vendor Claims: <strong>${assessment.evidence_summary.vendor_claims}</strong> (${assessment.evidence_summary.vendor_percentage.toFixed(1)}%) |
-                                Independent Sources: <strong>${assessment.evidence_summary.independent_claims}</strong> (${assessment.evidence_summary.independent_percentage.toFixed(1)}%)
+                        <div style="margin-bottom: 1rem; padding: 1rem; background: white; border-radius: 6px; border-left: 4px solid ${assessment.evidence_summary.total_evidence > 0 ? '#667eea' : '#f39c12'};">
+                            <strong>📊 Evidence Summary:</strong>
+                            <div style="margin-top: 0.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem;">
+                                <div>
+                                    <div style="font-size: 1.5rem; font-weight: bold; color: #667eea;">${assessment.evidence_summary.total_evidence || 0}</div>
+                                    <div style="font-size: 0.85rem; color: #666;">Total Evidence Items</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 1.5rem; font-weight: bold; color: #3498db;">${assessment.evidence_summary.vendor_stated || 0}</div>
+                                    <div style="font-size: 0.85rem; color: #666;">Vendor Claims (${(assessment.evidence_summary.vendor_percentage || 0).toFixed(1)}%)</div>
+                                </div>
+                                <div>
+                                    <div style="font-size: 1.5rem; font-weight: bold; color: #27ae60;">${assessment.evidence_summary.independent_verification || 0}</div>
+                                    <div style="font-size: 0.85rem; color: #666;">Independent Sources (${(assessment.evidence_summary.independent_percentage || 0).toFixed(1)}%)</div>
+                                </div>
+                                ${(assessment.evidence_summary.mixed_sources || 0) > 0 ? `
+                                <div>
+                                    <div style="font-size: 1.5rem; font-weight: bold; color: #f39c12;">${assessment.evidence_summary.mixed_sources}</div>
+                                    <div style="font-size: 0.85rem; color: #666;">Mixed Sources</div>
+                                </div>
+                                ` : ''}
+                            </div>
+                            <div style="margin-top: 0.5rem; padding: 0.5rem; background: #f8f9fa; border-radius: 4px;">
+                                <strong>Evidence Quality:</strong> 
+                                <span class="badge" style="text-transform: uppercase;">${assessment.evidence_summary.evidence_quality || 'unknown'}</span>
+                                ${assessment.evidence_summary.total_evidence === 0 ? `
+                                    <span style="margin-left: 1rem; color: #e67e22;">⚠️ No evidence tracked - assessment based on public data only</span>
+                                ` : ''}
                             </div>
                         </div>
-                    ` : ''}
+                    ` : `
+                        <div style="margin-bottom: 1rem; padding: 1rem; background: #fef8e7; border-radius: 6px; border-left: 4px solid #f39c12;">
+                            <strong>⚠️ Limited Evidence:</strong> No evidence summary available for this assessment.
+                        </div>
+                    `}
                     <details>
                         <summary style="cursor: pointer; font-weight: bold; margin-bottom: 0.5rem;">
                             View All Citations (${assessment.citations.length})
                         </summary>
                         <div style="margin-top: 1rem;">
-                            ${assessment.citations.map((cite, idx) => {
+                            ${assessment.citations.length > 0 ? assessment.citations.map((cite, idx) => {
                                 const sourceType = cite.source_type || 'unknown';
                                 const color = sourceType === 'independent' ? '#27ae60' : sourceType === 'vendor' ? '#3498db' : '#f39c12';
                                 return `
@@ -234,10 +401,10 @@ function displayAssessment(assessment) {
                                         </span>
                                     </div>
                                     <div style="font-weight: bold; margin-bottom: 0.25rem;">${cite.source || 'Unknown Source'}</div>
-                                    <div style="font-size: 0.9rem; margin-bottom: 0.5rem;">${cite.content || ''}</div>
+                                    ${cite.content ? `<div style="font-size: 0.9rem; margin-bottom: 0.5rem;">${cite.content}</div>` : ''}
                                     ${cite.url ? `<div style="font-size: 0.85rem;"><a href="${cite.url}" target="_blank" style="color: #667eea;">🔗 Source Link</a></div>` : ''}
                                 </div>
-                            `}).join('')}
+                            `}).join('') : '<div style="padding: 1rem; color: #666; text-align: center;">No citations available</div>'}
                         </div>
                     </details>
                 </div>

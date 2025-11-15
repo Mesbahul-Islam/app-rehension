@@ -188,7 +188,8 @@ class EvidenceRegistry:
             {
                 "id": item.id,
                 "source": item.source_name,
-                "type": item.source_type,
+                "source_type": item.source_type,
+                "content": item.claim_text,
                 "url": item.url,
                 "confidence": item.confidence,
                 "timestamp": item.timestamp

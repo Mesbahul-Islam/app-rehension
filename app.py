@@ -8,6 +8,7 @@ from datetime import datetime
 
 from config import Config
 from assessor import SecurityAssessor
+from input_parser import InputParser
 
 # Configure logging
 logging.basicConfig(
@@ -51,12 +52,43 @@ def assess():
         use_cache = data.get('use_cache', 'true') == 'true' 
         
         if not input_text:
-            return jsonify({'error': 'Please provide a product name, vendor, or URL'}), 400
+            return jsonify({'error': 'Please provide a product name, vendor, SHA1 hash, or URL'}), 400
         
         logger.info(f"Assessment request for: {input_text}")
         
+        # Parse input to detect format
+        parsed = InputParser.parse_input(input_text)
+        logger.info(f"Parsed input type: {parsed['input_type']}")
+        
+        # For SHA1, we could look it up in a dataset first
+        # For now, we'll assess using the SHA1 as identifier
+        if parsed['input_type'] == 'sha1':
+            logger.warning(f"SHA1 hash provided: {parsed['sha1'][:8]}... - Cannot directly assess. Need product/vendor name.")
+            return jsonify({
+                'error': 'SHA1 hash detected. Please provide the product name or vendor instead. SHA1-based assessment requires additional dataset mapping.',
+                'input_type': 'sha1',
+                'sha1': parsed['sha1']
+            }), 400
+        
+        # For vendor_product format, pass the product name only
+        # The assessor will try to resolve the vendor internally via LLM
+        if parsed['input_type'] == 'vendor_product':
+            # Use product name for assessment, but log vendor for reference
+            logger.info(f"Vendor detected: {parsed['vendor']}, Product: {parsed['product_name']}")
+            assessment_input = parsed['product_name']
+        else:
+            assessment_input = input_text
+        
         # Run assessment
-        result = assessor.assess_product(input_text, use_cache=use_cache)
+        result = assessor.assess_product(assessment_input, use_cache=use_cache)
+        
+        # Add input metadata to result
+        result['_input_metadata'] = {
+            'raw_input': input_text,
+            'parsed_type': parsed['input_type'],
+            'detected_vendor': parsed.get('vendor'),
+            'detected_product': parsed.get('product_name')
+        }
         
         return jsonify({
             'success': True,

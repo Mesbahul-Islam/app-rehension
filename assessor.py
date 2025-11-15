@@ -9,6 +9,7 @@ from data_sources import ProductHuntAPI, NVDAPI, CISAKEVAPI
 from llm_analyzer import GeminiAnalyzer
 from database import AssessmentCache
 from evidence import EvidenceRegistry
+from trust_scorer import TrustScorer
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +26,9 @@ class SecurityAssessor:
         self.cisa_kev = CISAKEVAPI()
         self.analyzer = GeminiAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
         self.cache = AssessmentCache(config.DATABASE_PATH)
+        self.trust_scorer = TrustScorer()
         
-        logger.info("SecurityAssessor initialized with NVD API")
+        logger.info("SecurityAssessor initialized with NVD API and TrustScorer")
     
     def assess_product(self, input_text: str, use_cache: bool = True) -> Dict[str, Any]:
         """
@@ -80,33 +82,57 @@ class SecurityAssessor:
             evidence_registry
         )
         
-        # Step 6: Calculate trust score
-        logger.info("Step 6: Calculating trust score")
-        all_data = {
-            'entity_info': entity_info,
-            'classification': classification,
-            'product_data': product_data,
-            'security_data': security_data,
-            'vuln_analysis': vuln_analysis,
-            'vulnerabilities': security_data['cves'],
-            'known_exploited': security_data['kevs']
-        }
-        trust_score = self.analyzer.calculate_trust_score(all_data, evidence_registry)
+        # Step 6: Gather additional security analysis
+        logger.info("Step 6: Analyzing security practices, incidents, compliance, and controls")
         
-        # Step 7: Suggest alternatives
-        logger.info("Step 7: Suggesting alternatives")
+        security_practices = self.analyzer.analyze_security_practices(
+            entity_info, evidence_registry
+        )
+        
+        incidents_analysis = self.analyzer.analyze_incidents(
+            entity_info, evidence_registry
+        )
+        
+        data_compliance = self.analyzer.analyze_data_compliance(
+            entity_info, evidence_registry
+        )
+        
+        deployment_controls = self.analyzer.analyze_deployment_controls(
+            entity_info, classification, evidence_registry
+        )
+        
+        # Step 7: Calculate rule-based trust score
+        logger.info("Step 7: Calculating transparent rule-based trust score")
+        
+        scoring_data = {
+            'cves': security_data['cves'],
+            'kevs': security_data['kevs'],
+            'product_data': product_data,
+            'security_practices': security_practices,
+            'incidents': incidents_analysis,
+            'data_compliance': data_compliance
+        }
+        
+        trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
+        
+        # Step 8: Suggest alternatives
+        logger.info("Step 8: Suggesting alternatives")
         alternatives, alt_evidence_refs = self.analyzer.suggest_alternatives(
             entity_info, classification, trust_score, evidence_registry
         )
         
-        # Step 8: Compile final assessment
-        logger.info("Step 8: Compiling final assessment with evidence citations")
+        # Step 9: Compile final assessment
+        logger.info("Step 9: Compiling final assessment with evidence citations")
         assessment = self._compile_assessment(
             entity_info=entity_info,
             classification=classification,
             product_data=product_data,
             security_data=security_data,
             vuln_analysis=vuln_analysis,
+            security_practices=security_practices,
+            incidents=incidents_analysis,
+            data_compliance=data_compliance,
+            deployment_controls=deployment_controls,
             trust_score=trust_score,
             alternatives=alternatives,
             evidence_registry=evidence_registry
@@ -208,7 +234,9 @@ class SecurityAssessor:
     
     def _compile_assessment(self, entity_info: Dict, classification: Dict,
                           product_data: Optional[Dict], security_data: Dict,
-                          vuln_analysis: Dict, trust_score: Dict,
+                          vuln_analysis: Dict, security_practices: Dict,
+                          incidents: Dict, data_compliance: Dict,
+                          deployment_controls: Dict, trust_score: Dict,
                           alternatives: list, evidence_registry=None) -> Dict[str, Any]:
         """Compile all information into final assessment"""
         
@@ -266,17 +294,53 @@ class SecurityAssessor:
                 'kev_list': security_data['kevs'][:5]  # Top 5 KEVs
             },
             'trust_score': {
-                'score': trust_score.get('score'),
+                'total_score': trust_score.get('total_score'),
                 'risk_level': trust_score.get('risk_level'),
                 'confidence': trust_score.get('confidence'),
-                'rationale': trust_score.get('rationale'),
-                'scoring_breakdown': trust_score.get('scoring_breakdown', {}),
-                'key_factors': trust_score.get('key_factors', []),
-                'data_limitations': trust_score.get('data_limitations', []),
-                'evidence_refs': trust_score.get('evidence_refs', [])
+                'components': trust_score.get('components', {}),
+                'calculation_method': trust_score.get('calculation_method'),
+                'weights': trust_score.get('weights', {}),
+                'timestamp': trust_score.get('timestamp')
+            },
+            'security_practices': {
+                'rating': security_practices.get('rating'),
+                'bug_bounty': security_practices.get('bug_bounty'),
+                'disclosure_policy': security_practices.get('disclosure_policy'),
+                'security_team_visible': security_practices.get('security_team_visible'),
+                'patch_cadence': security_practices.get('patch_cadence'),
+                'summary': security_practices.get('summary'),
+                'evidence_refs': security_practices.get('evidence_refs', [])
+            },
+            'incidents': {
+                'count': incidents.get('count', 0),
+                'severity': incidents.get('severity'),
+                'incidents': incidents.get('incidents', []),
+                'rating': incidents.get('rating'),
+                'summary': incidents.get('summary'),
+                'evidence_refs': incidents.get('evidence_refs', [])
+            },
+            'data_compliance': {
+                'status': data_compliance.get('status'),
+                'certifications': data_compliance.get('certifications', []),
+                'gdpr_compliant': data_compliance.get('gdpr_compliant'),
+                'data_residency': data_compliance.get('data_residency'),
+                'privacy_rating': data_compliance.get('privacy_rating'),
+                'summary': data_compliance.get('summary'),
+                'evidence_refs': data_compliance.get('evidence_refs', [])
+            },
+            'deployment_controls': {
+                'sso_support': deployment_controls.get('sso_support'),
+                'mfa_support': deployment_controls.get('mfa_support'),
+                'rbac_available': deployment_controls.get('rbac_available'),
+                'audit_logging': deployment_controls.get('audit_logging'),
+                'control_rating': deployment_controls.get('control_rating'),
+                'key_features': deployment_controls.get('key_features', []),
+                'limitations': deployment_controls.get('limitations', []),
+                'summary': deployment_controls.get('summary'),
+                'evidence_refs': deployment_controls.get('evidence_refs', [])
             },
             'alternatives': alternatives,
-            'recommendations': self._generate_recommendations(trust_score, vuln_analysis),
+            'recommendations': self._generate_recommendations(trust_score, vuln_analysis, incidents),
             'sources': self._compile_sources(product_data, security_data),
             'evidence_summary': evidence_summary,
             'citations': citations
@@ -284,12 +348,12 @@ class SecurityAssessor:
         
         return assessment
     
-    def _generate_recommendations(self, trust_score: Dict, vuln_analysis: Dict) -> list:
+    def _generate_recommendations(self, trust_score: Dict, vuln_analysis: Dict, incidents: Dict) -> list:
         """Generate actionable recommendations"""
         
         recommendations = []
         
-        score = trust_score.get('score', 50)
+        score = trust_score.get('total_score', 50)
         risk_level = trust_score.get('risk_level', 'medium')
         
         if score < 40 or risk_level == 'critical':
@@ -317,6 +381,15 @@ class SecurityAssessor:
                 'priority': 'CRITICAL',
                 'action': 'Verify all KEV vulnerabilities are patched',
                 'reason': 'Known exploited vulnerabilities present'
+            })
+        
+        # Incident-specific recommendations
+        incident_severity = incidents.get('severity', 'none')
+        if incident_severity in ['high', 'critical']:
+            recommendations.append({
+                'priority': 'HIGH',
+                'action': 'Review incident response history and vendor transparency',
+                'reason': f'Vendor has history of {incident_severity} severity security incidents'
             })
         
         return recommendations

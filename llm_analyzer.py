@@ -459,3 +459,223 @@ Only suggest real, well-known alternatives. If you cannot identify suitable alte
         except Exception as e:
             logger.error(f"Error in suggesting alternatives: {e}")
             return [], evidence_refs
+    
+    def analyze_incidents(self, entity_info: Dict, evidence_registry=None) -> Dict[str, Any]:
+        """Analyze public incidents and abuse signals"""
+        
+        evidence_refs = []
+        
+        prompt = f"""Analyze public incidents and abuse signals for: {entity_info.get('product_name')} by {entity_info.get('vendor')}
+
+Based on publicly known information, assess:
+1. Data breaches or security incidents (if any)
+2. Abuse/misuse reports
+3. Service outages or reliability issues
+4. Public controversies related to security
+
+Respond in JSON format:
+{{
+    "count": 0,
+    "severity": "none|low|medium|high",
+    "incidents": [],
+    "rating": "excellent|good|fair|poor",
+    "summary": "brief summary"
+}}
+
+If you have NO concrete information about incidents, return count: 0 and severity: "none"."""
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self.generation_config
+            )
+            
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif text.startswith("```"):
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(text)
+            result["evidence_refs"] = evidence_refs
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing incidents: {e}")
+            return {
+                "count": 0,
+                "severity": "none",
+                "incidents": [],
+                "rating": "unknown",
+                "summary": "Unable to analyze incidents",
+                "evidence_refs": evidence_refs
+            }
+    
+    def analyze_data_compliance(self, entity_info: Dict, evidence_registry=None) -> Dict[str, Any]:
+        """Analyze data handling and compliance posture"""
+        
+        evidence_refs = []
+        
+        prompt = f"""Analyze data handling and compliance for: {entity_info.get('product_name')} by {entity_info.get('vendor')}
+
+Assess:
+1. GDPR compliance indicators
+2. SOC 2 / ISO 27001 certifications (if known)
+3. Data residency options
+4. Privacy policy quality
+
+Respond in JSON format:
+{{
+    "status": "compliant|partial|non-compliant|unknown",
+    "certifications": [],
+    "gdpr_compliant": true|false|null,
+    "data_residency": "description",
+    "privacy_rating": "excellent|good|fair|poor|unknown",
+    "summary": "brief summary"
+}}
+
+Only include concrete information. Use "unknown" if uncertain."""
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self.generation_config
+            )
+            
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif text.startswith("```"):
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(text)
+            result["evidence_refs"] = evidence_refs
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing data compliance: {e}")
+            return {
+                "status": "unknown",
+                "certifications": [],
+                "gdpr_compliant": None,
+                "data_residency": "Unknown",
+                "privacy_rating": "unknown",
+                "summary": "Unable to analyze compliance",
+                "evidence_refs": evidence_refs
+            }
+    
+    def analyze_deployment_controls(self, entity_info: Dict, classification: Dict, evidence_registry=None) -> Dict[str, Any]:
+        """Analyze deployment model and admin controls"""
+        
+        evidence_refs = []
+        
+        deployment_model = classification.get('deployment_model', 'Unknown')
+        
+        prompt = f"""Analyze deployment and administrative controls for: {entity_info.get('product_name')} by {entity_info.get('vendor')}
+
+Deployment Model: {deployment_model}
+
+Assess:
+1. Access control capabilities (SSO, MFA, RBAC)
+2. Audit logging availability
+3. Admin control granularity
+4. Network security features
+
+Respond in JSON format:
+{{
+    "sso_support": true|false|null,
+    "mfa_support": true|false|null,
+    "rbac_available": true|false|null,
+    "audit_logging": true|false|null,
+    "control_rating": "excellent|good|fair|poor|unknown",
+    "key_features": [],
+    "limitations": [],
+    "summary": "brief summary"
+}}
+
+Only include verified information."""
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self.generation_config
+            )
+            
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif text.startswith("```"):
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(text)
+            result["evidence_refs"] = evidence_refs
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing deployment controls: {e}")
+            return {
+                "sso_support": None,
+                "mfa_support": None,
+                "rbac_available": None,
+                "audit_logging": None,
+                "control_rating": "unknown",
+                "key_features": [],
+                "limitations": [],
+                "summary": "Unable to analyze deployment controls",
+                "evidence_refs": evidence_refs
+            }
+    
+    def analyze_security_practices(self, entity_info: Dict, evidence_registry=None) -> Dict[str, Any]:
+        """Analyze vendor security practices and transparency"""
+        
+        evidence_refs = []
+        
+        prompt = f"""Analyze security practices for: {entity_info.get('product_name')} by {entity_info.get('vendor')}
+
+Assess:
+1. Bug bounty program existence
+2. Security disclosure policy
+3. Security team visibility
+4. Patch management track record
+
+Respond in JSON format:
+{{
+    "rating": "excellent|good|fair|poor|unknown",
+    "bug_bounty": true|false|null,
+    "disclosure_policy": true|false|null,
+    "security_team_visible": true|false|null,
+    "patch_cadence": "regular|irregular|unknown",
+    "summary": "brief assessment"
+}}"""
+        
+        try:
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=self.generation_config
+            )
+            
+            text = response.text.strip()
+            if text.startswith("```json"):
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif text.startswith("```"):
+                text = text.split("```")[1].split("```")[0].strip()
+            
+            result = json.loads(text)
+            result["evidence_refs"] = evidence_refs
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error analyzing security practices: {e}")
+            return {
+                "rating": "unknown",
+                "bug_bounty": None,
+                "disclosure_policy": None,
+                "security_team_visible": None,
+                "patch_cadence": "unknown",
+                "summary": "Unable to analyze security practices",
+                "evidence_refs": evidence_refs
+            }

@@ -52,12 +52,19 @@ def main():
             print(f"\n📊 Results for {assessment['entity']['product_name']}:")
             print(f"   Vendor: {assessment['entity']['vendor']}")
             print(f"   Category: {assessment['classification']['category']}")
-            print(f"   Trust Score: {assessment['trust_score']['score']}/100")
+            print(f"   Trust Score: {assessment['trust_score']['total_score']}/100")
             print(f"   Risk Level: {assessment['trust_score']['risk_level'].upper()}")
             print(f"   CVEs Found: {assessment['security_posture']['vulnerability_summary']['total_cves']}")
             print(f"   KEVs Found: {assessment['security_posture']['vulnerability_summary']['total_kevs']}")
             print(f"   Exploitation Risk: {assessment['security_posture']['vulnerability_summary']['exploitation_risk']}")
             
+            # Display scoring breakdown
+            print(f"\n   📊 Trust Score Components:")
+            for component_name, component_data in assessment['trust_score']['components'].items():
+                score = component_data['score']
+                max_points = component_data['max_points']
+                percentage = component_data['percentage']
+                print(f"   • {component_name.replace('_', ' ').title()}: {score:.1f}/{max_points} pts ({percentage}% weight)")            
             # Display top recommendation
             if assessment['recommendations']:
                 rec = assessment['recommendations'][0]
