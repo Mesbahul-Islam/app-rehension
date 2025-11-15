@@ -294,6 +294,32 @@ class SecurityAssessor:
             entity_info, classification, trust_score, evidence_registry
         )
         
+        # Score each alternative with the same CVSS+EPSS+KEV system
+        logger.info(f"Scoring {len(alternatives)} alternatives")
+        scored_alternatives = []
+        for alt in alternatives:
+            alt_product = alt.get('product_name')
+            alt_vendor = alt.get('vendor')
+            
+            if alt_product:
+                logger.info(f"  Scoring alternative: {alt_product} ({alt_vendor})")
+                alt_assessment = self.assess_alternative(alt_product, alt_vendor)
+                
+                # Merge LLM suggestions with actual scores
+                alt['trust_score'] = alt_assessment.get('trust_score')
+                alt['risk_level'] = alt_assessment.get('risk_level')
+                alt['cve_count'] = alt_assessment.get('cve_count', 0)
+                alt['kev_count'] = alt_assessment.get('kev_count', 0)
+                alt['scoring_breakdown'] = alt_assessment.get('scoring_breakdown', {})
+                alt['assessed'] = alt_assessment.get('trust_score') is not None
+                
+                scored_alternatives.append(alt)
+        
+        # Sort alternatives by trust score (highest first)
+        scored_alternatives.sort(key=lambda x: x.get('trust_score') or 0, reverse=True)
+        alt_scores = ["{} ({})".format(a.get('product_name'), a.get('trust_score')) for a in scored_alternatives]
+        logger.info(f"Alternatives sorted by trust score: {alt_scores}")
+        
         # Compile final assessment with multi-agent metadata
         logger.info("Compiling final multi-agent verified assessment")
         assessment = self._compile_assessment(
@@ -307,7 +333,7 @@ class SecurityAssessor:
             data_compliance=data_compliance,
             deployment_controls=deployment_controls,
             trust_score=trust_score,
-            alternatives=alternatives,
+            alternatives=scored_alternatives,
             evidence_registry=evidence_registry,
             virustotal_data=virustotal_data
         )
@@ -439,6 +465,32 @@ class SecurityAssessor:
             entity_info, classification, trust_score, evidence_registry
         )
         
+        # Score each alternative with the same CVSS+EPSS+KEV system
+        logger.info(f"Scoring {len(alternatives)} alternatives")
+        scored_alternatives = []
+        for alt in alternatives:
+            alt_product = alt.get('product_name')
+            alt_vendor = alt.get('vendor')
+            
+            if alt_product:
+                logger.info(f"  Scoring alternative: {alt_product} ({alt_vendor})")
+                alt_assessment = self.assess_alternative(alt_product, alt_vendor)
+                
+                # Merge LLM suggestions with actual scores
+                alt['trust_score'] = alt_assessment.get('trust_score')
+                alt['risk_level'] = alt_assessment.get('risk_level')
+                alt['cve_count'] = alt_assessment.get('cve_count', 0)
+                alt['kev_count'] = alt_assessment.get('kev_count', 0)
+                alt['scoring_breakdown'] = alt_assessment.get('scoring_breakdown', {})
+                alt['assessed'] = alt_assessment.get('trust_score') is not None
+                
+                scored_alternatives.append(alt)
+        
+        # Sort alternatives by trust score (highest first)
+        scored_alternatives.sort(key=lambda x: x.get('trust_score') or 0, reverse=True)
+        alt_scores = ["{} ({})".format(a.get('product_name'), a.get('trust_score')) for a in scored_alternatives]
+        logger.info(f"Alternatives sorted by trust score: {alt_scores}")
+        
         # Step 9: Compile final assessment
         logger.info("Step 9: Compiling final assessment with evidence citations")
         assessment = self._compile_assessment(
@@ -452,7 +504,7 @@ class SecurityAssessor:
             data_compliance=data_compliance,
             deployment_controls=deployment_controls,
             trust_score=trust_score,
-            alternatives=alternatives,
+            alternatives=scored_alternatives,
             evidence_registry=evidence_registry,
             virustotal_data=virustotal_data
         )
@@ -828,3 +880,51 @@ class SecurityAssessor:
     def get_assessment_history(self, limit: int = 100) -> list:
         """Get list of all cached assessments"""
         return self.cache.get_all_assessments(limit)
+    
+    def assess_alternative(self, product_name: str, vendor: str = None) -> Dict[str, Any]:
+        """
+        Lightweight assessment of an alternative product for scoring comparison.
+        Returns trust score and key metrics without full UI-level details.
+        
+        Args:
+            product_name: Name of the alternative product
+            vendor: Vendor/company name (optional)
+            
+        Returns:
+            Dict with trust_score and security metrics
+        """
+        logger.info(f"Assessing alternative: {product_name} ({vendor})")
+        
+        try:
+            # Gather security data (CVE, KEV, EPSS)
+            security_data = self._gather_security_data(vendor, product_name)
+            
+            # Calculate trust score using same CVSS+EPSS+KEV formula
+            scoring_data = {
+                'cves': security_data['cves'],
+                'kevs': security_data['kevs'],
+                'epss_data': security_data.get('epss_data', [])
+            }
+            
+            trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
+            
+            return {
+                'product_name': product_name,
+                'vendor': vendor,
+                'trust_score': trust_score.get('score', 0),
+                'risk_level': trust_score.get('risk_level', 'unknown'),
+                'cve_count': len(security_data['cves']),
+                'kev_count': len(security_data['kevs']),
+                'scoring_breakdown': trust_score.get('scoring_breakdown', {}),
+                'key_factors': trust_score.get('key_factors', [])
+            }
+            
+        except Exception as e:
+            logger.error(f"Error assessing alternative {product_name}: {e}")
+            return {
+                'product_name': product_name,
+                'vendor': vendor,
+                'trust_score': None,
+                'risk_level': 'unknown',
+                'error': str(e)
+            }

@@ -66,34 +66,69 @@ document.getElementById('compareForm').addEventListener('submit', async (e) => {
     compareBtn.disabled = true;
     
     try {
-        // Fetch assessments for all products
-        const assessments = await Promise.all(
+        // Fetch fresh assessments for all products (no cache)
+        console.log('Fetching fresh assessments for:', products);
+        
+        const assessmentResults = await Promise.all(
             products.map(async (product) => {
-                const response = await fetch('/assess', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        input_text: product,
-                        use_cache: true
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (!response.ok) {
-                    throw new Error(`Failed to assess ${product}: ${data.error}`);
+                try {
+                    // Step 1: Start the assessment
+                    const startResponse = await fetch('/assess', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            input_text: product,
+                            use_cache: false,  // Always fetch fresh data for comparison
+                            session_id: `compare_${Date.now()}_${Math.random()}`
+                        })
+                    });
+                    
+                    const startData = await startResponse.json();
+                    
+                    if (!startResponse.ok) {
+                        console.error(`Failed to start assessment for ${product}:`, startData);
+                        throw new Error(`Failed to assess ${product}: ${startData.error || 'Unknown error'}`);
+                    }
+                    
+                    const sessionId = startData.session_id;
+                    console.log(`Assessment started for ${product}, session: ${sessionId}`);
+                    
+                    // Step 2: Wait for completion by polling the result endpoint
+                    const maxAttempts = 60; // 60 attempts
+                    const pollInterval = 2000; // 2 seconds
+                    
+                    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                        await new Promise(resolve => setTimeout(resolve, pollInterval));
+                        
+                        const resultResponse = await fetch(`/result/${sessionId}`);
+                        const resultData = await resultResponse.json();
+                        
+                        if (resultResponse.ok && resultData.success && resultData.assessment) {
+                            console.log(`Assessment completed for ${product}:`, resultData.assessment);
+                            return resultData.assessment;
+                        }
+                        
+                        // Still processing, continue polling
+                        console.log(`Polling attempt ${attempt + 1}/${maxAttempts} for ${product}...`);
+                    }
+                    
+                    throw new Error(`Assessment timeout for ${product} - took longer than expected`);
+                    
+                } catch (err) {
+                    console.error(`Error assessing ${product}:`, err);
+                    throw err;
                 }
-                
-                return data.assessment;
             })
         );
         
-        displayComparison(assessments);
+        console.log('All fresh assessments received:', assessmentResults);
+        displayComparison(assessmentResults);
         comparison.style.display = 'block';
         
     } catch (error) {
+        console.error('Comparison error:', error);
         errorMsg.innerHTML = `<div class="error">❌ ${error.message}</div>`;
     } finally {
         loading.classList.remove('active');
@@ -104,89 +139,264 @@ document.getElementById('compareForm').addEventListener('submit', async (e) => {
 function displayComparison(assessments) {
     const content = document.getElementById('comparisonContent');
     
-    let html = `
-        <table style="width: 100%; border-collapse: collapse; margin-bottom: 2rem;">
-            <thead>
-                <tr style="background: #f8f9fa;">
-                    <th style="padding: 1rem; text-align: left;">Metric</th>
-                    ${assessments.map(a => `<th style="padding: 1rem; text-align: center;">${a.entity.product_name}</th>`).join('')}
-                </tr>
-            </thead>
-            <tbody>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Trust Score</td>
-                    ${assessments.map(a => {
-                        const score = a.trust_score.score;
-                        let color = '#27ae60';
-                        if (score < 40) color = '#c33';
-                        else if (score < 60) color = '#e67e22';
-                        else if (score < 75) color = '#f39c12';
-                        return `<td style="padding: 1rem; text-align: center; font-size: 1.5rem; font-weight: bold; color: ${color};">${score}/100</td>`;
-                    }).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Risk Level</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center;"><span class="badge ${a.trust_score.risk_level}">${a.trust_score.risk_level.toUpperCase()}</span></td>`).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Vendor</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${a.entity.vendor}</td>`).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Category</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${a.classification.category}</td>`).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Total CVEs</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${a.security_posture.vulnerability_summary.total_cves}</td>`).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Known Exploited (KEV)</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center; color: ${a.security_posture.vulnerability_summary.total_kevs > 0 ? '#c33' : '#27ae60'};">${a.security_posture.vulnerability_summary.total_kevs}</td>`).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Vulnerability Trend</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${a.security_posture.vulnerability_summary.trend}</td>`).join('')}
-                </tr>
-                <tr style="border-bottom: 1px solid #e1e8ed;">
-                    <td style="padding: 1rem; font-weight: 600;">Exploitation Risk</td>
-                    ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${a.security_posture.vulnerability_summary.exploitation_risk}</td>`).join('')}
-                </tr>
-            </tbody>
-        </table>
-        
-        <div style="margin-top: 2rem;">
-            <h3>Detailed Analysis</h3>
-            ${assessments.map((a, idx) => `
-                <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;">
-                    <h4>${a.entity.product_name} (${a.entity.vendor})</h4>
-                    <p><strong>Trust Score Rationale:</strong> ${a.trust_score.rationale}</p>
-                    ${a.security_posture.vulnerability_summary.key_concerns.length > 0 ? `
-                        <p><strong>Key Concerns:</strong></p>
-                        <ul>
-                            ${a.security_posture.vulnerability_summary.key_concerns.map(c => `<li>${c}</li>`).join('')}
-                        </ul>
-                    ` : ''}
-                    ${a.recommendations.length > 0 ? `
-                        <p><strong>Top Recommendation:</strong> ${a.recommendations[0].action}</p>
-                    ` : ''}
-                    ${a.evidence_summary ? `
-                        <p><strong>Evidence Quality:</strong> ${a.evidence_summary.total_items} items 
-                        (${a.evidence_summary.independent_percentage.toFixed(0)}% independent sources)</p>
-                    ` : ''}
-                </div>
-            `).join('')}
-        </div>
-        
-        <div style="background: #e7f3ff; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #667eea; margin-top: 2rem;">
-            <h4>💡 Recommendation</h4>
-            <p>Based on the comparison:</p>
-            ${(() => {
-                const sorted = [...assessments].sort((a, b) => b.trust_score.score - a.trust_score.score);
-                return `<p><strong>${sorted[0].entity.product_name}</strong> has the highest trust score (${sorted[0].trust_score.score}/100) and is recommended as the safest option among the compared products.</p>`;
-            })()}
-        </div>
-    `;
+    console.log('Comparison assessments:', assessments);
+    
+    // Validate assessments
+    if (!assessments || assessments.length === 0) {
+        content.innerHTML = '<div class="error">No assessment data available</div>';
+        return;
+    }
+    
+    // Check if all assessments have required data - be more lenient
+    const validAssessments = assessments.filter(a => {
+        if (!a) {
+            console.log('Invalid assessment: null or undefined');
+            return false;
+        }
+        if (!a.entity) {
+            console.log('Missing entity:', a);
+            return false;
+        }
+        if (!a.trust_score) {
+            console.log('Missing trust_score:', a);
+            return false;
+        }
+        // Classification can be missing for some products
+        return true;
+    });
+    
+    if (validAssessments.length === 0) {
+        content.innerHTML = '<div class="error">All assessments failed to load. Please try again.</div>';
+        return;
+    }
+    
+    if (validAssessments.length !== assessments.length) {
+        console.warn(`Only ${validAssessments.length} of ${assessments.length} assessments are valid`);
+        // Continue with valid assessments only
+        assessments = validAssessments;
+    }
+    
+    // Check if all products are in the same category
+    const categories = assessments.map(a => {
+        if (!a.classification) {
+            console.log('No classification for product:', a.entity?.product_name);
+            return 'Unknown';
+        }
+        return a.classification.primary_category || a.classification.category || 'Unknown';
+    });
+    
+    console.log('Categories:', categories);
+    const uniqueCategories = [...new Set(categories)];
+    const sameCategory = uniqueCategories.length === 1 && uniqueCategories[0] !== 'Unknown';
+    
+    let html = '';
+    
+    if (!sameCategory) {
+        // Different categories - show brief comparison
+        html = `
+            <div style="background: #fff3cd; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #ffc107; margin-bottom: 2rem;">
+                <h4>⚠️ Different Product Categories Detected</h4>
+                <p>The products you're comparing belong to different categories. A detailed security comparison is only meaningful for products in the same category.</p>
+            </div>
+            
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 2rem;">
+                <thead>
+                    <tr style="background: #f8f9fa;">
+                        <th style="padding: 1rem; text-align: left;">Product</th>
+                        ${assessments.map(a => `<th style="padding: 1rem; text-align: center;">${(a.entity && a.entity.product_name) || 'Unknown'}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom: 1px solid #e1e8ed;">
+                        <td style="padding: 1rem; font-weight: 600;">Vendor</td>
+                        ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${(a.entity && a.entity.vendor) || 'Unknown'}</td>`).join('')}
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e1e8ed;">
+                        <td style="padding: 1rem; font-weight: 600;">Category</td>
+                        ${assessments.map(a => `<td style="padding: 1rem; text-align: center;"><span style="background: #e7f3ff; padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: 600;">${(a.classification && (a.classification.primary_category || a.classification.category)) || 'Unknown'}</span></td>`).join('')}
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e1e8ed;">
+                        <td style="padding: 1rem; font-weight: 600;">Type</td>
+                        ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${(a.classification && a.classification.software_type) || 'N/A'}</td>`).join('')}
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e1e8ed;">
+                        <td style="padding: 1rem; font-weight: 600;">Purpose</td>
+                        ${assessments.map(a => `<td style="padding: 1rem; text-align: center; font-size: 0.9rem;">${(a.classification && a.classification.purpose) || 'N/A'}</td>`).join('')}
+                    </tr>
+                </tbody>
+            </table>
+            
+            <div style="margin-top: 2rem;">
+                <h3>Product Overview</h3>
+                ${assessments.map((a, idx) => `
+                    <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem;">
+                        <h4>${(a.entity && a.entity.product_name) || 'Unknown'} (${(a.entity && a.entity.vendor) || 'Unknown'})</h4>
+                        <p><strong>Category:</strong> ${(a.classification && (a.classification.primary_category || a.classification.category)) || 'Unknown'}</p>
+                        <p><strong>Description:</strong> ${(a.classification && a.classification.description) || 'No description available'}</p>
+                        ${a.classification && a.classification.key_technologies && a.classification.key_technologies.length > 0 ? `
+                            <p><strong>Technologies:</strong> ${a.classification.key_technologies.join(', ')}</p>
+                        ` : ''}
+                        ${a.classification && a.classification.use_cases && a.classification.use_cases.length > 0 ? `
+                            <p><strong>Use Cases:</strong></p>
+                            <ul>
+                                ${a.classification.use_cases.map(uc => `<li>${uc}</li>`).join('')}
+                            </ul>
+                        ` : ''}
+                    </div>
+                `).join('')}
+            </div>
+            
+            <div style="background: #e7f3ff; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #667eea; margin-top: 2rem;">
+                <h4>💡 Note</h4>
+                <p>These products serve different purposes and cannot be directly compared for security risk. To perform a detailed security comparison with scoring, please compare products within the same category.</p>
+            </div>
+        `;
+    } else {
+        // Same category - show detailed security comparison with full scoring
+        html = `
+            <div style="background: #d4edda; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #28a745; margin-bottom: 2rem;">
+                <h4>✅ Same Category Comparison</h4>
+                <p>All products belong to the <strong>${uniqueCategories[0]}</strong> category. Performing detailed security comparison using CVSS + EPSS + KEV scoring.</p>
+            </div>
+            
+            <table style="width: 100%; border-collapse: collapse; margin-bottom: 2rem;">
+                <thead>
+                    <tr style="background: #f8f9fa;">
+                        <th style="padding: 1rem; text-align: left;">Security Metric</th>
+                        ${assessments.map(a => `<th style="padding: 1rem; text-align: center;">${(a.entity && a.entity.product_name) || 'Unknown'}</th>`).join('')}
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="border-bottom: 2px solid #dee2e6; background: #f8f9fa;">
+                        <td style="padding: 1rem; font-weight: 700; font-size: 1.1rem;">🎯 Trust Score</td>
+                        ${assessments.map(a => {
+                            const score = (a.trust_score && (a.trust_score.score || a.trust_score.total_score)) || 0;
+                            let color = '#27ae60';
+                            if (score < 40) color = '#c33';
+                            else if (score < 60) color = '#e67e22';
+                            else if (score < 75) color = '#f39c12';
+                            return `<td style="padding: 1rem; text-align: center; font-size: 2rem; font-weight: bold; color: ${color};">${score.toFixed(1)}</td>`;
+                        }).join('')}
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e1e8ed;">
+                        <td style="padding: 1rem; font-weight: 600;">Risk Level</td>
+                        ${assessments.map(a => {
+                            const riskLevel = (a.trust_score && a.trust_score.risk_level) || 'unknown';
+                            let color = '#27ae60';
+                            let emoji = '✅';
+                            if (riskLevel === 'critical') { color = '#dc3545'; emoji = '🚨'; }
+                            else if (riskLevel === 'high') { color = '#fd7e14'; emoji = '⚠️'; }
+                            else if (riskLevel === 'medium') { color = '#ffc107'; emoji = '⚠️'; }
+                            return `<td style="padding: 1rem; text-align: center;"><span style="background: ${color}; color: white; padding: 0.5rem 1rem; border-radius: 4px; font-weight: 600;">${emoji} ${riskLevel.toUpperCase()}</span></td>`;
+                        }).join('')}
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e1e8ed;">
+                        <td style="padding: 1rem; font-weight: 600;">Vendor</td>
+                        ${assessments.map(a => `<td style="padding: 1rem; text-align: center;">${(a.entity && a.entity.vendor) || 'Unknown'}</td>`).join('')}
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h3 style="margin-top: 2rem; margin-bottom: 1rem;">📊 Scoring Breakdown</h3>
+            ${assessments.map((a, idx) => {
+                const breakdown = a.trust_score.scoring_breakdown || {};
+                const score = a.trust_score.score || a.trust_score.total_score || 0;
+                let scoreColor = '#27ae60';
+                if (score < 40) scoreColor = '#c33';
+                else if (score < 60) scoreColor = '#e67e22';
+                else if (score < 75) scoreColor = '#f39c12';
+                
+                return `
+                    <div style="background: #fff; border: 2px solid #e1e8ed; padding: 1.5rem; border-radius: 8px; margin-bottom: 1.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                            <h4 style="margin: 0;">${(a.entity && a.entity.product_name) || 'Unknown'} (${(a.entity && a.entity.vendor) || 'Unknown'})</h4>
+                            <div style="text-align: right;">
+                                <div style="font-size: 2rem; font-weight: bold; color: ${scoreColor};">${score.toFixed(1)}</div>
+                                <div style="font-size: 0.85rem; color: #666;">Trust Score</div>
+                            </div>
+                        </div>
+                        
+                        <div style="background: #f8f9fa; padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+                            <strong style="font-size: 0.95rem; color: #495057;">Risk Components:</strong>
+                            <div style="margin-top: 0.75rem;">
+                                ${breakdown.cvss_risk !== undefined ? `
+                                    <div style="margin-bottom: 0.75rem;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                            <span style="font-size: 0.9rem;">🔓 CVSS Risk (50% weight)</span>
+                                            <span style="font-weight: bold; color: #dc3545;">${(breakdown.cvss_risk * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div style="background: #e9ecef; border-radius: 4px; overflow: hidden; height: 8px;">
+                                            <div style="background: #dc3545; height: 100%; width: ${breakdown.cvss_risk * 100}%;"></div>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                ${breakdown.epss_risk !== undefined ? `
+                                    <div style="margin-bottom: 0.75rem;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                            <span style="font-size: 0.9rem;">🎯 EPSS Risk (40% weight)</span>
+                                            <span style="font-weight: bold; color: #fd7e14;">${(breakdown.epss_risk * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div style="background: #e9ecef; border-radius: 4px; overflow: hidden; height: 8px;">
+                                            <div style="background: #fd7e14; height: 100%; width: ${breakdown.epss_risk * 100}%;"></div>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                                ${breakdown.kev_risk !== undefined ? `
+                                    <div style="margin-bottom: 0.75rem;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.25rem;">
+                                            <span style="font-size: 0.9rem;">⚠️ KEV Risk (10% weight)</span>
+                                            <span style="font-weight: bold; color: #ffc107;">${(breakdown.kev_risk * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div style="background: #e9ecef; border-radius: 4px; overflow: hidden; height: 8px;">
+                                            <div style="background: #ffc107; height: 100%; width: ${breakdown.kev_risk * 100}%;"></div>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                        
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                            <div style="background: #fff; border: 1px solid #e1e8ed; padding: 1rem; border-radius: 6px;">
+                                <div style="font-size: 0.85rem; color: #666; margin-bottom: 0.25rem;">Total CVEs</div>
+                                <div style="font-size: 1.5rem; font-weight: bold; color: #dc3545;">${(a.security_posture && a.security_posture.vulnerability_summary && a.security_posture.vulnerability_summary.total_cves) || 0}</div>
+                            </div>
+                            <div style="background: #fff; border: 1px solid #e1e8ed; padding: 1rem; border-radius: 6px;">
+                                <div style="font-size: 0.85rem; color: #666; margin-bottom: 0.25rem;">Known Exploited (KEV)</div>
+                                <div style="font-size: 1.5rem; font-weight: bold; color: ${(a.security_posture && a.security_posture.vulnerability_summary && a.security_posture.vulnerability_summary.total_kevs > 0) ? '#dc3545' : '#28a745'};">${(a.security_posture && a.security_posture.vulnerability_summary && a.security_posture.vulnerability_summary.total_kevs) || 0}</div>
+                            </div>
+                            <div style="background: #fff; border: 1px solid #e1e8ed; padding: 1rem; border-radius: 6px;">
+                                <div style="font-size: 0.85rem; color: #666; margin-bottom: 0.25rem;">Vulnerability Trend</div>
+                                <div style="font-size: 1rem; font-weight: bold;">${(a.security_posture && a.security_posture.vulnerability_summary && a.security_posture.vulnerability_summary.trend) || 'N/A'}</div>
+                            </div>
+                        </div>
+                        
+                        <p style="margin-top: 1rem;"><strong>Rationale:</strong> ${(a.trust_score && a.trust_score.rationale) || 'No rationale provided'}</p>
+                        
+                        ${a.trust_score.key_factors && a.trust_score.key_factors.length > 0 ? `
+                            <div style="margin-top: 1rem;">
+                                <strong>Key Factors:</strong>
+                                <ul style="margin: 0.5rem 0 0 1.5rem;">
+                                    ${a.trust_score.key_factors.map(f => `<li>${f}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('')}
+            
+            <div style="background: #e7f3ff; padding: 1.5rem; border-radius: 8px; border-left: 4px solid #667eea; margin-top: 2rem;">
+                <h4>🏆 Recommendation</h4>
+                <p>Based on the CVSS + EPSS + KEV scoring comparison:</p>
+                ${(() => {
+                    const sorted = [...assessments].sort((a, b) => ((b.trust_score && (b.trust_score.score || b.trust_score.total_score)) || 0) - ((a.trust_score && (a.trust_score.score || a.trust_score.total_score)) || 0));
+                    const bestScore = (sorted[0].trust_score && (sorted[0].trust_score.score || sorted[0].trust_score.total_score)) || 0;
+                    const bestProduct = (sorted[0].entity && sorted[0].entity.product_name) || 'Unknown';
+                    const bestRisk = (sorted[0].trust_score && sorted[0].trust_score.risk_level) || 'unknown';
+                    return `<p><strong>${bestProduct}</strong> has the highest trust score (${bestScore.toFixed(1)}/100) with a <strong>${bestRisk}</strong> risk level and is recommended as the safest option among the compared products.</p>`;
+                })()}
+            </div>
+        `;
+    }
     
     content.innerHTML = html;
 }

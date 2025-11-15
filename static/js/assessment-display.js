@@ -64,6 +64,9 @@ function displayAssessment(assessment) {
         `;
     }
     
+    // Alternatives - show for all analysis types
+    html += renderAlternatives(alternatives);
+    
     // Common sections
     html += renderMetadata(assessment);
     
@@ -958,18 +961,93 @@ function renderAlternatives(alternatives) {
     
     return `
         <div style="margin-bottom: 2rem;">
-            <h3>Safer Alternatives</h3>
-            ${alternatives.map(alt => `
-                <div style="background: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-                    <h4>${alt.product_name} (${alt.vendor})</h4>
-                    <p>${alt.rationale}</p>
-                    ${alt.security_advantages.length > 0 ? `
-                        <ul>
-                            ${alt.security_advantages.map(adv => `<li>${adv}</li>`).join('')}
-                        </ul>
-                    ` : ''}
-                </div>
-            `).join('')}
+            <h3>🔍 Safer Alternatives</h3>
+            <p style="color: #666; margin-bottom: 1rem;">
+                Each alternative has been assessed using the same CVSS + EPSS + KEV scoring system. 
+                Results are sorted by trust score (highest first).
+            </p>
+            ${alternatives.map((alt, index) => {
+                const trustScore = alt.trust_score || 0;
+                const riskLevel = alt.risk_level || 'unknown';
+                const assessed = alt.assessed !== false;
+                
+                // Get risk level color and emoji
+                let riskColor, riskEmoji;
+                if (riskLevel === 'low') {
+                    riskColor = '#28a745';
+                    riskEmoji = '✅';
+                } else if (riskLevel === 'medium') {
+                    riskColor = '#ffc107';
+                    riskEmoji = '⚠️';
+                } else if (riskLevel === 'high') {
+                    riskColor = '#fd7e14';
+                    riskEmoji = '⚠️';
+                } else if (riskLevel === 'critical') {
+                    riskColor = '#dc3545';
+                    riskEmoji = '🚨';
+                } else {
+                    riskColor = '#6c757d';
+                    riskEmoji = '❓';
+                }
+                
+                return `
+                    <div style="background: #fff; border: 2px solid ${index === 0 ? '#28a745' : '#e9ecef'}; padding: 1.5rem; border-radius: 8px; margin-bottom: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        ${index === 0 ? '<div style="background: #28a745; color: white; display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.85rem; font-weight: bold;">🏆 BEST ALTERNATIVE</div>' : ''}
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 1rem;">
+                            <div>
+                                <h4 style="margin: 0 0 0.25rem 0; color: #2c3e50;">${alt.product_name}</h4>
+                                <div style="color: #666; font-size: 0.9rem;">${alt.vendor || 'Unknown Vendor'}</div>
+                            </div>
+                            ${assessed ? `
+                                <div style="text-align: right;">
+                                    <div style="font-size: 2rem; font-weight: bold; color: ${riskColor};">${trustScore.toFixed(1)}</div>
+                                    <div style="font-size: 0.85rem; color: ${riskColor}; font-weight: 600;">${riskEmoji} ${riskLevel.toUpperCase()}</div>
+                                </div>
+                            ` : '<div style="color: #6c757d; font-style: italic;">Not assessed</div>'}
+                        </div>
+                        
+                        <p style="margin-bottom: 1rem; line-height: 1.6;">${alt.rationale}</p>
+                        
+                        ${assessed && alt.scoring_breakdown ? `
+                            <div style="background: #f8f9fa; padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+                                <strong style="font-size: 0.9rem; color: #495057;">Security Metrics:</strong>
+                                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; margin-top: 0.5rem;">
+                                    ${alt.scoring_breakdown.cvss_risk !== undefined ? `
+                                        <div>
+                                            <div style="font-size: 0.85rem; color: #666;">🔓 CVSS Risk (50%)</div>
+                                            <div style="font-weight: bold; color: #dc3545;">${(alt.scoring_breakdown.cvss_risk * 100).toFixed(1)}%</div>
+                                        </div>
+                                    ` : ''}
+                                    ${alt.scoring_breakdown.epss_risk !== undefined ? `
+                                        <div>
+                                            <div style="font-size: 0.85rem; color: #666;">🎯 EPSS Risk (40%)</div>
+                                            <div style="font-weight: bold; color: #fd7e14;">${(alt.scoring_breakdown.epss_risk * 100).toFixed(1)}%</div>
+                                        </div>
+                                    ` : ''}
+                                    ${alt.scoring_breakdown.kev_risk !== undefined ? `
+                                        <div>
+                                            <div style="font-size: 0.85rem; color: #666;">⚠️ KEV Risk (10%)</div>
+                                            <div style="font-weight: bold; color: #ffc107;">${(alt.scoring_breakdown.kev_risk * 100).toFixed(1)}%</div>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                                <div style="margin-top: 0.75rem; font-size: 0.85rem; color: #666;">
+                                    📊 ${alt.cve_count || 0} CVEs found | ${alt.kev_count || 0} Known Exploited Vulnerabilities
+                                </div>
+                            </div>
+                        ` : ''}
+                        
+                        ${alt.security_advantages && alt.security_advantages.length > 0 ? `
+                            <div>
+                                <strong style="font-size: 0.9rem; color: #495057;">Key Advantages:</strong>
+                                <ul style="margin: 0.5rem 0 0 1.5rem; line-height: 1.8;">
+                                    ${alt.security_advantages.map(adv => `<li>${adv}</li>`).join('')}
+                                </ul>
+                            </div>
+                        ` : ''}
+                    </div>
+                `;
+            }).join('')}
         </div>
     `;
 }

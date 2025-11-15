@@ -8,3 +8,4 @@ cachetools
 langchain
 langchain-google-genai
 langgraph
+SQLAlchemy
