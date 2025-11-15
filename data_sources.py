@@ -596,3 +596,81 @@ class WebSourceFetcher:
             logger.debug(f"Could not fetch {url}: {e}")
         
         return None
+
+
+class EPSSAPI:
+    """Fetch EPSS (Exploit Prediction Scoring System) scores from FIRST.org"""
+    
+    def __init__(self):
+        self.base_url = "https://api.first.org/data/v1/epss"
+        
+    def get_epss_scores(self, cve_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        """
+        Fetch EPSS scores for a list of CVE IDs
+        
+        Args:
+            cve_ids: List of CVE IDs (e.g., ['CVE-2022-27225', 'CVE-2022-27223'])
+            
+        Returns:
+            Dictionary mapping CVE ID to EPSS data: {
+                'CVE-2022-27225': {
+                    'epss': 0.32,
+                    'percentile': 0.95,
+                    'date': '2024-11-15'
+                }
+            }
+        """
+        if not cve_ids:
+            return {}
+        
+        try:
+            # Batch request - join CVE IDs with commas
+            cve_list = ','.join(cve_ids[:100])  # Limit to 100 CVEs per request
+            
+            params = {
+                'cve': cve_list
+            }
+            
+            logger.info(f"Fetching EPSS scores for {len(cve_ids[:100])} CVEs")
+            print(f"\n=== EPSS API REQUEST ===")
+            print(f"URL: {self.base_url}")
+            print(f"CVE list: {cve_list}")
+            
+            response = requests.get(
+                self.base_url,
+                params=params,
+                timeout=15
+            )
+            
+            print(f"Response status: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"Response data keys: {data.keys() if data else 'None'}")
+                
+                # Parse response
+                epss_data = {}
+                if 'data' in data:
+                    print(f"Number of items in data: {len(data['data'])}")
+                    for item in data['data']:
+                        cve_id = item.get('cve')
+                        if cve_id:
+                            epss_data[cve_id] = {
+                                'epss': float(item.get('epss', 0)),
+                                'percentile': float(item.get('percentile', 0)),
+                                'date': item.get('date', ''),
+                                'source': 'FIRST.org EPSS'
+                            }
+                            print(f"  {cve_id}: EPSS={item.get('epss')}")
+                
+                logger.info(f"Retrieved EPSS scores for {len(epss_data)} CVEs")
+                print(f"Total EPSS scores retrieved: {len(epss_data)}")
+                print(f"========================\n")
+                return epss_data
+            else:
+                logger.warning(f"EPSS API returned status {response.status_code}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error fetching EPSS scores: {e}")
+            return {}

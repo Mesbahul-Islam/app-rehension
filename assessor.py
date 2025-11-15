@@ -5,7 +5,7 @@ import logging
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
-from data_sources import ProductHuntAPI, NVDAPI, CISAKEVAPI, VirusTotalAPI
+from data_sources import ProductHuntAPI, NVDAPI, CISAKEVAPI, VirusTotalAPI, EPSSAPI
 from llm_analyzer import GeminiAnalyzer
 from multi_agent_analyzer import MultiAgentAnalyzer
 from database import AssessmentCache
@@ -26,6 +26,7 @@ class SecurityAssessor:
         self.product_hunt = ProductHuntAPI(config.PRODUCTHUNT_API_KEY) if config.PRODUCTHUNT_API_KEY else None
         self.nvd = NVDAPI(api_key=config.NVD_API_KEY)
         self.cisa_kev = CISAKEVAPI()
+        self.epss = EPSSAPI()
         self.virustotal = VirusTotalAPI(config.VIRUSTOTAL_API_KEY) if config.VIRUSTOTAL_API_KEY else None
         
         # Initialize analyzer based on configuration
@@ -267,9 +268,19 @@ class SecurityAssessor:
             trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
         else:
             logger.info("Calculating standard product/vendor trust score")
+            
+            # Fetch EPSS scores for all CVEs
+            cve_ids = [cve.get('cve_id') for cve in security_data['cves'] if cve.get('cve_id')]
+            print(f"\n=== EPSS FETCHING IN ASSESSOR ===")
+            print(f"CVE IDs to fetch EPSS for: {cve_ids}")
+            epss_data = self.epss.get_epss_scores(cve_ids) if cve_ids else {}
+            print(f"EPSS data fetched: {epss_data}")
+            print(f"================================\n")
+            
             scoring_data = {
                 'cves': security_data['cves'],
                 'kevs': security_data['kevs'],
+                'epss_data': epss_data,
                 'product_data': product_data,
                 'security_practices': security_practices,
                 'incidents': incidents_analysis,
@@ -402,9 +413,19 @@ class SecurityAssessor:
             trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
         else:
             logger.info("Using standard product/vendor trust scorer")
+            
+            # Fetch EPSS scores for all CVEs
+            cve_ids = [cve.get('cve_id') for cve in security_data['cves'] if cve.get('cve_id')]
+            print(f"\n=== EPSS FETCHING IN ASSESSOR (single-agent) ===")
+            print(f"CVE IDs to fetch EPSS for: {cve_ids}")
+            epss_data = self.epss.get_epss_scores(cve_ids) if cve_ids else {}
+            print(f"EPSS data fetched: {epss_data}")
+            print(f"================================================\n")
+            
             scoring_data = {
                 'cves': security_data['cves'],
                 'kevs': security_data['kevs'],
+                'epss_data': epss_data,
                 'product_data': product_data,
                 'security_practices': security_practices,
                 'incidents': incidents_analysis,
@@ -646,10 +667,15 @@ class SecurityAssessor:
                 'kev_list': security_data['kevs'][:5]  # Top 5 KEVs
             },
             'trust_score': {
-                'total_score': trust_score.get('total_score'),
+                'score': trust_score.get('score'),  # New CVSS+EPSS+KEV scoring
+                'total_score': trust_score.get('total_score') or trust_score.get('score'),  # Backwards compatibility
                 'risk_level': trust_score.get('risk_level'),
                 'confidence': trust_score.get('confidence'),
                 'components': trust_score.get('components', {}),
+                'scoring_breakdown': trust_score.get('scoring_breakdown', {}),
+                'key_factors': trust_score.get('key_factors', []),
+                'data_limitations': trust_score.get('data_limitations', []),
+                'rationale': trust_score.get('rationale'),
                 'calculation_method': trust_score.get('calculation_method'),
                 'weights': trust_score.get('weights', {}),
                 'timestamp': trust_score.get('timestamp')

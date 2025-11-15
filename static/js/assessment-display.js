@@ -29,9 +29,10 @@ function displayAssessment(assessment) {
     console.log('Assessment type:', isVirusTotalAnalysis ? 'VirusTotal File Analysis' : 'Product/Vendor Analysis');
     console.log('Extracted dataCompliance:', dataCompliance);
     console.log('Extracted deploymentControls:', deploymentControls);
+    console.log('Trust score object:', trustScore);
     
     // Build trust score color
-    const score = trustScore.total_score;
+    const score = trustScore.score || trustScore.total_score || 0;
     let scoreColor = '#27ae60';
     if (score < 40) scoreColor = '#c33';
     else if (score < 60) scoreColor = '#e67e22';
@@ -236,14 +237,70 @@ function renderEntityInfo(entity, classification, isVirusTotalAnalysis) {
 }
 
 function renderTrustScore(trustScore, scoreColor, isVirusTotalAnalysis) {
-    const score = trustScore.total_score;
+    const score = trustScore.score || trustScore.total_score || 0;
     
     // Different title based on analysis type
     const titleIcon = isVirusTotalAnalysis ? '🛡️' : '🎯';
     const titleText = isVirusTotalAnalysis ? 'File Security Score' : 'Trust Score';
-    const scoreType = isVirusTotalAnalysis ? '(VirusTotal Analysis)' : '(Rule-Based)';
+    const scoreType = isVirusTotalAnalysis ? '(VirusTotal Analysis)' : '(CVSS + EPSS + KEV)';
     
-    const componentsHtml = Object.entries(trustScore.components).map(([key, comp]) => {
+    // Use appropriate rendering based on analysis type
+    const componentsHtml = isVirusTotalAnalysis ? renderVirusTotalComponents(trustScore) : renderNewScoringBreakdown(trustScore);
+    
+    // Generate formula explanation based on analysis type
+    const formulaHtml = isVirusTotalAnalysis ? 
+        generateVirusTotalFormulaExplanation(trustScore) : 
+        generateStandardFormulaExplanation(trustScore);
+    
+    return `
+        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+            <h3>${titleIcon} ${titleText} ${scoreType}</h3>
+            <div style="font-size: 3rem; font-weight: bold; color: ${scoreColor}; margin: 1rem 0;">
+                ${score}/100
+            </div>
+            <p><strong>Risk Level:</strong> <span class="badge ${trustScore.risk_level}">${trustScore.risk_level.toUpperCase()}</span></p>
+            <p><strong>Confidence:</strong> ${trustScore.confidence}</p>
+            
+            <details open style="margin-top: 1.5rem;">
+                <summary style="cursor: pointer; font-weight: bold; font-size: 1.1rem; margin-bottom: 1rem;">
+                    📊 Scoring Breakdown
+                </summary>
+                <div style="background: white; padding: 1rem; border-radius: 6px;">
+                    <p style="margin-bottom: 1rem; color: #666;">
+                        ${isVirusTotalAnalysis ? 
+                            'This score uses <strong>transparent rule-based calculations</strong> - not AI-generated scores. Each component has fixed weights and deterministic formulas based on VirusTotal detection data.' : 
+                            'This score uses <strong>industry-standard security metrics</strong>: CVSS (vulnerability severity), EPSS (exploit probability), and KEV (known exploited vulnerabilities). No AI, no opinions - just data-driven risk assessment.'}
+                    </p>
+                    ${componentsHtml}
+                    ${trustScore.calculation_method || trustScore.rationale ? `
+                    <div style="margin-top: 1rem; padding: 1rem; background: #e8f4f8; border-radius: 6px; border-left: 4px solid #3498db;">
+                        <strong>${trustScore.calculation_method ? 'Calculation Method' : 'Assessment'}:</strong> ${trustScore.calculation_method || trustScore.rationale}
+                    </div>
+                    ` : ''}
+                </div>
+            </details>
+            
+            <details style="margin-top: 1rem;">
+                <summary style="cursor: pointer; font-weight: bold; font-size: 1rem; color: #667eea; margin-bottom: 1rem;">
+                    🔬 Get to know how the score is calculated
+                </summary>
+                <div style="background: white; padding: 1.5rem; border-radius: 6px; border: 2px solid #667eea;">
+                    ${formulaHtml}
+                </div>
+            </details>
+        </div>
+    `;
+}
+
+/**
+ * Render VirusTotal component-based scoring (for file analysis only)
+ */
+function renderVirusTotalComponents(trustScore) {
+    if (!trustScore.components) {
+        return '<p style="color: #666;">Scoring details not available.</p>';
+    }
+    
+    return Object.entries(trustScore.components).map(([key, comp]) => {
         const scorePercentage = (comp.score / comp.max_points * 100).toFixed(0);
         const barColor = scorePercentage > 70 ? '#27ae60' : scorePercentage > 50 ? '#f39c12' : '#c33';
         return `
@@ -268,46 +325,108 @@ function renderTrustScore(trustScore, scoreColor, isVirusTotalAnalysis) {
             </div>
         `;
     }).join('');
+}
+
+/**
+ * Render the new CVSS+EPSS+KEV scoring breakdown
+ */
+function renderNewScoringBreakdown(trustScore) {
+    const breakdown = trustScore.scoring_breakdown;
+    if (!breakdown) {
+        return '<p style="color: #666;">Scoring details not available.</p>';
+    }
     
-    // Generate formula explanation based on analysis type
-    const formulaHtml = isVirusTotalAnalysis ? 
-        generateVirusTotalFormulaExplanation(trustScore) : 
-        generateStandardFormulaExplanation(trustScore);
+    const cvssRisk = breakdown.cvss_risk || 0;
+    const epssRisk = breakdown.epss_risk || 0;
+    const kevRisk = breakdown.kev_risk || 0;
+    const totalRisk = breakdown.total_risk || 0;
     
     return `
-        <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
-            <h3>${titleIcon} ${titleText} ${scoreType}</h3>
-            <div style="font-size: 3rem; font-weight: bold; color: ${scoreColor}; margin: 1rem 0;">
-                ${score}/100
-            </div>
-            <p><strong>Risk Level:</strong> <span class="badge ${trustScore.risk_level}">${trustScore.risk_level.toUpperCase()}</span></p>
-            <p><strong>Confidence:</strong> ${trustScore.confidence}</p>
+        <div style="margin-bottom: 1.5rem; padding: 1rem; background: #f8f9fa; border-radius: 6px;">
+            <h4 style="margin-top: 0;">Risk Components</h4>
             
-            <details open style="margin-top: 1.5rem;">
-                <summary style="cursor: pointer; font-weight: bold; font-size: 1.1rem; margin-bottom: 1rem;">
-                    📊 Scoring Breakdown
-                </summary>
-                <div style="background: white; padding: 1rem; border-radius: 6px;">
-                    <p style="margin-bottom: 1rem; color: #666;">
-                        This score uses <strong>transparent rule-based calculations</strong> - not AI-generated scores. 
-                        Each component has fixed weights and deterministic formulas.
-                        ${isVirusTotalAnalysis ? '<br><strong>Note:</strong> This analysis uses VirusTotal-specific scoring criteria focused on file security indicators.' : ''}
-                    </p>
-                    ${componentsHtml}
-                    <div style="margin-top: 1rem; padding: 1rem; background: #e8f4f8; border-radius: 6px; border-left: 4px solid #3498db;">
-                        <strong>Calculation Method:</strong> ${trustScore.calculation_method}
+            <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <div>
+                        <strong>CVSS Risk</strong>
+                        <span style="background: #667eea; color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;">
+                            50% weight
+                        </span>
                     </div>
+                    <span style="font-size: 1.2rem; font-weight: bold; color: ${cvssRisk > 0.7 ? '#c33' : cvssRisk > 0.4 ? '#f39c12' : '#27ae60'};">
+                        ${(cvssRisk * 10).toFixed(1)}/10 severity
+                    </span>
                 </div>
-            </details>
+                <div style="background: #ddd; height: 20px; border-radius: 10px; overflow: hidden;">
+                    <div style="background: ${cvssRisk > 0.7 ? '#c33' : cvssRisk > 0.4 ? '#f39c12' : '#27ae60'}; height: 100%; width: ${cvssRisk * 100}%; transition: width 0.3s;"></div>
+                </div>
+                <div style="font-size: 0.9rem; color: #666; margin-top: 0.5rem;">
+                    Based on vulnerability severity scores from CVSS
+                </div>
+            </div>
             
-            <details style="margin-top: 1rem;">
-                <summary style="cursor: pointer; font-weight: bold; font-size: 1rem; color: #667eea; margin-bottom: 1rem;">
-                    🔬 Get to know how the score is calculated
-                </summary>
-                <div style="background: white; padding: 1.5rem; border-radius: 6px; border: 2px solid #667eea;">
-                    ${formulaHtml}
+            <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <div>
+                        <strong>EPSS Risk</strong>
+                        <span style="background: #667eea; color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;">
+                            40% weight
+                        </span>
+                    </div>
+                    <span style="font-size: 1.2rem; font-weight: bold; color: ${epssRisk > 0.5 ? '#c33' : epssRisk > 0.2 ? '#f39c12' : '#27ae60'};">
+                        ${(epssRisk * 100).toFixed(1)}% exploit probability
+                    </span>
                 </div>
-            </details>
+                <div style="background: #ddd; height: 20px; border-radius: 10px; overflow: hidden;">
+                    <div style="background: ${epssRisk > 0.5 ? '#c33' : epssRisk > 0.2 ? '#f39c12' : '#27ae60'}; height: 100%; width: ${epssRisk * 100}%; transition: width 0.3s;"></div>
+                </div>
+                <div style="font-size: 0.9rem; color: #666; margin-top: 0.5rem;">
+                    Based on exploit prediction from FIRST.org EPSS
+                </div>
+            </div>
+            
+            <div style="margin-bottom: 1rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                    <div>
+                        <strong>KEV Risk</strong>
+                        <span style="background: #667eea; color: white; padding: 0.2rem 0.5rem; border-radius: 4px; font-size: 0.75rem; margin-left: 0.5rem;">
+                            10% weight
+                        </span>
+                    </div>
+                    <span style="font-size: 1.2rem; font-weight: bold; color: ${kevRisk === 1 ? '#c33' : '#27ae60'};">
+                        ${kevRisk === 1 ? '⚠️ Active exploits' : '✅ No active exploits'}
+                    </span>
+                </div>
+                <div style="background: #ddd; height: 20px; border-radius: 10px; overflow: hidden;">
+                    <div style="background: ${kevRisk === 1 ? '#c33' : '#27ae60'}; height: 100%; width: ${kevRisk * 100}%; transition: width 0.3s;"></div>
+                </div>
+                <div style="font-size: 0.9rem; color: #666; margin-top: 0.5rem;">
+                    Based on CISA Known Exploited Vulnerabilities catalog
+                </div>
+            </div>
+            
+            <div style="margin-top: 1.5rem; padding: 1rem; background: white; border-radius: 6px; border-left: 4px solid #667eea;">
+                <strong>Total Risk Score:</strong> ${(totalRisk * 100).toFixed(1)}% 
+                → <strong>Trust Score:</strong> ${((1 - totalRisk) * 100).toFixed(1)}/100
+            </div>
+            
+            ${trustScore.key_factors && trustScore.key_factors.length > 0 ? `
+                <div style="margin-top: 1rem; padding: 1rem; background: #fff3cd; border-radius: 6px; border-left: 4px solid #ffc107;">
+                    <strong>Key Factors:</strong>
+                    <ul style="margin: 0.5rem 0 0 0; padding-left: 1.5rem;">
+                        ${trustScore.key_factors.map(f => `<li>${f}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+            
+            ${trustScore.data_limitations && trustScore.data_limitations.length > 0 ? `
+                <div style="margin-top: 1rem; padding: 0.75rem; background: #e8f4f8; border-radius: 6px; border-left: 4px solid #3498db;">
+                    <strong>Data Limitations:</strong>
+                    <ul style="margin: 0.5rem 0 0 0; padding-left: 1.5rem; font-size: 0.9rem;">
+                        ${trustScore.data_limitations.map(l => `<li>${l}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : ''}
         </div>
     `;
 }
@@ -442,141 +561,85 @@ function generateStandardFormulaExplanation(trustScore) {
     return `
         <h4 style="margin-top: 0; color: #667eea;">📊 How We Calculate the Trust Score</h4>
         <p style="color: #666; margin-bottom: 1.5rem;">
-            We analyze 6 key factors from security databases and public sources to evaluate product/vendor trustworthiness:
+            We analyze 3 key security metrics from authoritative sources to calculate product/vendor risk:
         </p>
         
         <div style="margin-bottom: 1.5rem;">
-            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">1. 🔓 Security Vulnerabilities (30 points - Most Important)</h5>
+            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">1. 🔓 CVSS - Vulnerability Severity (50% weight)</h5>
             <div style="background: #e8f4f8; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; border-left: 4px solid #3498db;">
                 <p style="margin: 0; font-size: 0.95rem; line-height: 1.6;">
-                    <strong>What we check:</strong> Known security vulnerabilities (CVEs) from the National Vulnerability Database
+                    <strong>What we measure:</strong> Common Vulnerability Scoring System (CVSS) scores from the National Vulnerability Database
                     <br><br>
                     <strong>How it works:</strong>
-                    <br>• No vulnerabilities found → Full 30 points ✓
-                    <br>• Each vulnerability reduces the score based on severity:
-                    <br>&nbsp;&nbsp;• Critical vulnerabilities hurt the score most
-                    <br>&nbsp;&nbsp;• High severity hurts moderately
-                    <br>&nbsp;&nbsp;• Medium and low have smaller impact
-                    <br>• Recent vulnerabilities (last 2 years) count more against the score
+                    <br>• CVSS scores range from 0-10 (0 = no risk, 10 = critical)
+                    <br>• We calculate the average CVSS score across all known CVEs
+                    <br>• The average is normalized to 0-1 scale
+                    <br>• Higher CVSS = Higher risk to your organization
+                    <br>• This metric carries 50% weight in the final calculation
                     <br><br>
-                    <strong>Why it matters:</strong> Products with fewer and less severe vulnerabilities are safer to use.
+                    <strong>Why it matters:</strong> CVSS is the industry-standard metric for vulnerability severity. It tells you how dangerous each security flaw is if exploited.
                 </p>
             </div>
         </div>
         
         <div style="margin-bottom: 1.5rem;">
-            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">2. 🎯 Actively Exploited Vulnerabilities (25 points)</h5>
+            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">2. 🎯 EPSS - Exploit Probability (40% weight)</h5>
             <div style="background: #e8f4f8; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; border-left: 4px solid #3498db;">
                 <p style="margin: 0; font-size: 0.95rem; line-height: 1.6;">
-                    <strong>What we check:</strong> Known Exploited Vulnerabilities from CISA (U.S. Cybersecurity Agency)
+                    <strong>What we measure:</strong> Exploit Prediction Scoring System from FIRST.org
                     <br><br>
                     <strong>How it works:</strong>
-                    <br>• No exploited vulnerabilities → Full 25 points ✓
-                    <br>• 1 exploited vulnerability → 15 points
-                    <br>• 2-3 exploited vulnerabilities → 10 points
-                    <br>• 4-5 exploited vulnerabilities → 5 points
-                    <br>• 6+ exploited vulnerabilities → 0 points
-                    <br>• Extra penalty if used in ransomware attacks
+                    <br>• EPSS predicts the probability (0-100%) that a vulnerability will be exploited in the wild within 30 days
+                    <br>• We calculate the average EPSS score across all CVEs
+                    <br>• Scores are updated daily based on real-world threat intelligence
+                    <br>• Higher EPSS = More likely to be actively exploited by attackers
+                    <br>• This metric carries 40% weight in the final calculation
                     <br><br>
-                    <strong>Why it matters:</strong> These vulnerabilities are actively being used by hackers RIGHT NOW. Very dangerous.
+                    <strong>Why it matters:</strong> Not all vulnerabilities are equally likely to be exploited. EPSS tells you which ones attackers are actually targeting RIGHT NOW.
                 </p>
             </div>
         </div>
         
         <div style="margin-bottom: 1.5rem;">
-            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">3. 📈 Product Maturity & Adoption (15 points)</h5>
+            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">3. ⚠️ KEV - Known Exploited Vulnerabilities (10% weight)</h5>
             <div style="background: #e8f4f8; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; border-left: 4px solid #3498db;">
                 <p style="margin: 0; font-size: 0.95rem; line-height: 1.6;">
-                    <strong>What we check:</strong> Community votes and engagement from ProductHunt
+                    <strong>What we measure:</strong> CISA Known Exploited Vulnerabilities catalog
                     <br><br>
                     <strong>How it works:</strong>
-                    <br>• Starts at 10 points baseline
-                    <br>• 1000+ votes → +5 bonus points (total: 15) ✓✓✓
-                    <br>• 500-999 votes → +3 bonus points (total: 13) ✓✓
-                    <br>• 100-499 votes → +1 bonus point (total: 11) ✓
-                    <br>• Less than 100 votes → baseline 10 points
+                    <br>• Binary flag: 0 if no KEVs found, 1 if any KEVs exist
+                    <br>• CISA maintains a list of vulnerabilities confirmed to be actively exploited
+                    <br>• These are often used in ransomware attacks and major breaches
+                    <br>• This metric carries 10% weight in the final calculation
                     <br><br>
-                    <strong>Why it matters:</strong> Popular, widely-used products have been tested by more people and organizations.
-                </p>
-            </div>
-        </div>
-        
-        <div style="margin-bottom: 1.5rem;">
-            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">4. 🛡️ Security Practices (15 points)</h5>
-            <div style="background: #e8f4f8; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; border-left: 4px solid #3498db;">
-                <p style="margin: 0; font-size: 0.95rem; line-height: 1.6;">
-                    <strong>What we check:</strong> Does the vendor follow good security practices?
-                    <br>&nbsp;&nbsp;• Bug bounty program
-                    <br>&nbsp;&nbsp;• Public security disclosure policy
-                    <br>&nbsp;&nbsp;• Visible security team
-                    <br>&nbsp;&nbsp;• Regular security patches
-                    <br><br>
-                    <strong>How it works:</strong>
-                    <br>• Excellent practices → 15 points ✓✓✓
-                    <br>• Good practices → 12 points ✓✓
-                    <br>• Fair practices → 8 points ✓
-                    <br>• Poor practices → 3 points ✗
-                    <br>• Unknown → 7.5 points (middle)
-                    <br><br>
-                    <strong>Why it matters:</strong> Companies with strong security practices are better at preventing and fixing vulnerabilities.
-                </p>
-            </div>
-        </div>
-        
-        <div style="margin-bottom: 1.5rem;">
-            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">5. ⚠️ Security Incidents (10 points)</h5>
-            <div style="background: #e8f4f8; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; border-left: 4px solid #3498db;">
-                <p style="margin: 0; font-size: 0.95rem; line-height: 1.6;">
-                    <strong>What we check:</strong> Past security breaches, data leaks, or major incidents
-                    <br><br>
-                    <strong>How it works:</strong>
-                    <br>• No incidents → Full 10 points ✓
-                    <br>• Low severity incidents → 8 points
-                    <br>• Medium severity incidents → 5 points
-                    <br>• High severity incidents → 2 points
-                    <br>• Critical incidents → 0 points
-                    <br><br>
-                    <strong>Why it matters:</strong> Past security breaches indicate potential weaknesses in the vendor's security posture.
-                </p>
-            </div>
-        </div>
-        
-        <div style="margin-bottom: 1.5rem;">
-            <h5 style="color: #2c3e50; margin-bottom: 0.5rem;">6. 📋 Data Protection & Compliance (5 points)</h5>
-            <div style="background: #e8f4f8; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; border-left: 4px solid #3498db;">
-                <p style="margin: 0; font-size: 0.95rem; line-height: 1.6;">
-                    <strong>What we check:</strong> Compliance with data protection regulations (GDPR, certifications)
-                    <br><br>
-                    <strong>How it works:</strong>
-                    <br>• Fully compliant → 5 points ✓
-                    <br>• Partially compliant → 3 points
-                    <br>• Non-compliant → 0 points ✗
-                    <br>• Unknown status → 2.5 points (middle)
-                    <br><br>
-                    <strong>Why it matters:</strong> Compliance shows the vendor takes data privacy seriously and follows regulations.
+                    <strong>Why it matters:</strong> If a vulnerability is on CISA's KEV list, it means hackers are ACTIVELY using it in real attacks. These are the highest priority to patch.
                 </p>
             </div>
         </div>
         
         <div style="background: #fff3cd; padding: 1.25rem; border-radius: 6px; border-left: 4px solid #ffc107; margin-top: 1.5rem;">
-            <h5 style="margin-top: 0; color: #856404;">⚠️ How We Determine Risk Level</h5>
+            <h5 style="margin-top: 0; color: #856404;">⚠️ Final Score Calculation</h5>
             <p style="margin: 0; font-size: 0.95rem; line-height: 1.6; color: #856404;">
-                Based on the total score (0-100):<br><br>
-                • Score 80-100 = 🟢 LOW risk (Very trustworthy)<br>
-                • Score 60-79 = 🟡 MEDIUM risk (Generally acceptable)<br>
-                • Score 40-59 = 🟠 HIGH risk (Use with caution)<br>
-                • Score 0-39 = 🔴 CRITICAL risk (Not recommended)
+                <strong>Formula:</strong><br>
+                Risk Score = (0.5 × CVSS/10) + (0.4 × EPSS) + (0.1 × KEV)<br>
+                Trust Score = (1 - Risk Score) × 100<br><br>
+                <strong>Risk Level Thresholds:</strong><br>
+                • Score 75-100 = 🟢 VERY_LOW risk<br>
+                • Score 60-74 = 🟡 LOW risk<br>
+                • Score 40-59 = 🟠 MEDIUM risk<br>
+                • Score 25-39 = 🔴 HIGH risk<br>
+                • Score 0-24 = 🔴 CRITICAL risk
             </p>
         </div>
         
         <div style="background: #d1ecf1; padding: 1.25rem; border-radius: 6px; border-left: 4px solid #17a2b8; margin-top: 1rem;">
             <h5 style="margin-top: 0; color: #0c5460;">💯 Confidence in Our Assessment</h5>
             <p style="margin: 0; font-size: 0.95rem; line-height: 1.6; color: #0c5460;">
-                Our confidence depends on available data sources:<br><br>
-                • 2+ data sources available = HIGH confidence ✓✓✓<br>
-                • 1 data source available = MEDIUM confidence ✓✓<br>
-                • No data sources = LOW confidence ✓<br><br>
-                <strong>Data sources:</strong> CVE database, CISA KEV catalog, ProductHunt
+                Our confidence depends on data completeness:<br><br>
+                • HIGH confidence: CVSS data available for most CVEs + EPSS data available<br>
+                • MEDIUM confidence: Some CVSS or EPSS data missing<br>
+                • LOW confidence: Significant data gaps<br><br>
+                <strong>Data sources:</strong> NVD (CVE/CVSS), FIRST.org (EPSS), CISA (KEV catalog)
             </p>
         </div>
     `;

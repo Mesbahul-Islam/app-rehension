@@ -3,86 +3,203 @@ Rule-based trust scoring system with transparent calculations
 """
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class TrustScorer:
     """
-    Transparent rule-based trust scoring (0-100)
+    Trust scoring based on CVSS, EPSS, and KEV (0-100)
     Higher score = More trustworthy / Lower risk
+    
+    Formula:
+    - CVSS weight: 50%
+    - EPSS weight: 40%
+    - KEV weight: 10%
+    
+    trust_score = (1 - risk_score) * 100
+    where risk_score = 0.5*cvss_norm + 0.4*epss + 0.1*kev_flag
     """
     
-    # Scoring weights (must sum to 100)
-    WEIGHTS = {
-        "vulnerability_history": 30,
-        "kev_presence": 25,
-        "product_maturity": 15,
-        "security_practices": 15,
-        "incident_signals": 10,
-        "data_compliance": 5
-    }
-    
     def calculate_trust_score(self, assessment_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Calculate transparent rule-based trust score"""
+        """
+        Calculate trust score based on CVSS, EPSS, and KEV
         
-        components = {}
+        Returns score from 0-100 where higher = safer
+        """
         
-        # 1. Vulnerability History (30 points)
-        components["vulnerability_history"] = self._score_vulnerability_history(
-            assessment_data.get('cves', [])
+        cves = assessment_data.get('cves', [])
+        kevs = assessment_data.get('kevs', [])
+        epss_data = assessment_data.get('epss_data', {})
+        
+        # Log incoming data
+        print(f"\n=== TRUST SCORE CALCULATION ===")
+        print(f"Total CVEs: {len(cves)}")
+        print(f"Total KEVs: {len(kevs)}")
+        print(f"EPSS data entries: {len(epss_data)}")
+        print(f"EPSS data keys: {list(epss_data.keys()) if epss_data else 'None'}")
+        
+        if not cves:
+            # No CVEs found = maximum trust
+            return {
+                "score": 100,
+                "risk_level": "VERY_LOW",
+                "confidence": "High",
+                "rationale": "No known vulnerabilities found",
+                "scoring_breakdown": {
+                    "cvss_risk": 0,
+                    "epss_risk": 0,
+                    "kev_risk": 0,
+                    "total_risk": 0
+                },
+                "key_factors": ["No CVEs reported"],
+                "data_limitations": []
+            }
+        
+        # Calculate aggregate risk metrics
+        cvss_scores = []
+        epss_scores = []
+        kev_count = len(kevs)
+        total_cves = len(cves)
+        
+        # Extract CVSS scores from CVEs
+        for cve in cves:
+            cvss = cve.get('cvss_v3') or cve.get('cvss_v2')
+            if cvss:
+                cvss_scores.append(float(cvss))
+        
+        print(f"CVSS scores extracted: {cvss_scores}")
+        
+        # Extract EPSS scores from epss_data
+        for cve in cves:
+            cve_id = cve.get('cve_id')
+            print(f"Processing CVE: {cve_id}")
+            if cve_id and cve_id in epss_data:
+                epss = epss_data[cve_id].get('epss', 0)
+                print(f"  Found EPSS: {epss}")
+                epss_scores.append(float(epss))
+            else:
+                print(f"  No EPSS data found")
+        
+        print(f"EPSS scores extracted: {epss_scores}")
+        
+        # Calculate average CVSS (normalized to 0-1)
+        avg_cvss = sum(cvss_scores) / len(cvss_scores) if cvss_scores else 5.0  # Default to medium
+        cvss_norm = avg_cvss / 10.0
+        
+        # Calculate average EPSS (already 0-1)
+        avg_epss = sum(epss_scores) / len(epss_scores) if epss_scores else 0.1  # Default low
+        
+        # KEV flag (0 or 1)
+        kev_flag = 1 if kev_count > 0 else 0
+        
+        # Calculate weighted risk score
+        risk_score = (
+            0.5 * cvss_norm +    # 50% weight on CVSS
+            0.4 * avg_epss +     # 40% weight on EPSS
+            0.1 * kev_flag       # 10% weight on KEV
         )
         
-        # 2. KEV Presence (25 points)
-        components["kev_presence"] = self._score_kev_presence(
-            assessment_data.get('kevs', [])
-        )
+        print(f"\nScoring breakdown:")
+        print(f"  Avg CVSS: {avg_cvss:.2f} (normalized: {cvss_norm:.3f})")
+        print(f"  Avg EPSS: {avg_epss:.3f}")
+        print(f"  KEV flag: {kev_flag}")
+        print(f"  Risk score: {risk_score:.3f}")
         
-        # 3. Product Maturity (15 points)
-        components["product_maturity"] = self._score_product_maturity(
-            assessment_data.get('product_data')
-        )
+        # Convert to trust score (invert risk)
+        trust_score = (1 - risk_score) * 100
+        trust_score = max(0, min(100, trust_score))  # Clamp to 0-100
         
-        # 4. Security Practices (15 points)
-        components["security_practices"] = self._score_security_practices(
-            assessment_data.get('llm_analysis', {})
-        )
-        
-        # 5. Incident Signals (10 points)
-        components["incident_signals"] = self._score_incident_signals(
-            assessment_data.get('llm_analysis', {})
-        )
-        
-        # 6. Data Compliance (5 points)
-        components["data_compliance"] = self._score_data_compliance(
-            assessment_data.get('llm_analysis', {})
-        )
-        
-        # Calculate total score
-        total_score = sum(components.values())
+        print(f"  Trust score: {trust_score:.1f}")
+        print(f"==========================\n")
         
         # Determine risk level
-        risk_level = self._determine_risk_level(total_score)
+        risk_level = self._determine_risk_level(trust_score)
         
-        # Build detailed breakdown
-        breakdown = {
-            component: {
-                "score": score,
-                "max_points": self.WEIGHTS[component],
-                "weight_percentage": self.WEIGHTS[component],  # Fixed weight
-                "score_percentage": (score / self.WEIGHTS[component] * 100) if self.WEIGHTS[component] > 0 else 0,  # Dynamic score
-                "explanation": self._get_component_explanation(component, score, assessment_data)
-            }
-            for component, score in components.items()
-        }
+        # Build rationale
+        rationale = self._build_rationale(trust_score, avg_cvss, avg_epss, kev_count, total_cves)
+        
+        # Key factors
+        key_factors = []
+        if avg_cvss >= 7.0:
+            key_factors.append(f"High average CVSS score: {avg_cvss:.1f}")
+        if avg_epss >= 0.5:
+            key_factors.append(f"High exploit probability: {avg_epss*100:.1f}%")
+        if kev_count > 0:
+            key_factors.append(f"{kev_count} known exploited vulnerability(ies)")
+        if not key_factors:
+            key_factors.append("Low risk profile")
+        
+        # Data limitations
+        data_limitations = []
+        if len(cvss_scores) < total_cves:
+            data_limitations.append(f"CVSS data missing for {total_cves - len(cvss_scores)} CVEs")
+        if len(epss_scores) < total_cves:
+            data_limitations.append(f"EPSS data missing for {total_cves - len(epss_scores)} CVEs")
         
         return {
-            "total_score": round(total_score, 1),
+            "score": round(trust_score, 1),
             "risk_level": risk_level,
-            "confidence": self._calculate_confidence(assessment_data),
-            "components": breakdown,
-            "calculation_method": "Rule-based weighted scoring",
-            "weights": self.WEIGHTS,
-            "timestamp": datetime.now().isoformat()
+            "confidence": self._calculate_confidence(cvss_scores, epss_scores, total_cves),
+            "rationale": rationale,
+            "scoring_breakdown": {
+                "cvss_risk": round(cvss_norm, 3),
+                "epss_risk": round(avg_epss, 3),
+                "kev_risk": kev_flag,
+                "total_risk": round(risk_score, 3),
+                "avg_cvss": round(avg_cvss, 2),
+                "avg_epss": round(avg_epss, 3),
+                "kev_count": kev_count,
+                "total_cves": total_cves
+            },
+            "key_factors": key_factors,
+            "data_limitations": data_limitations if data_limitations else ["None"],
+            "calculation_method": "CVSS (50%) + EPSS (40%) + KEV (10%)"
         }
+    
+    def _determine_risk_level(self, trust_score: float) -> str:
+        """Determine risk level from trust score"""
+        if trust_score >= 80:
+            return "VERY_LOW"
+        elif trust_score >= 60:
+            return "LOW"
+        elif trust_score >= 40:
+            return "MEDIUM"
+        elif trust_score >= 20:
+            return "HIGH"
+        else:
+            return "CRITICAL"
+    
+    def _build_rationale(self, trust_score: float, avg_cvss: float, avg_epss: float, kev_count: int, total_cves: int) -> str:
+        """Build human-readable rationale"""
+        if trust_score >= 80:
+            return f"Low risk profile with {total_cves} CVE(s), average CVSS {avg_cvss:.1f}, and low exploit probability."
+        elif trust_score >= 60:
+            return f"Moderate risk with {total_cves} CVE(s) found, average CVSS {avg_cvss:.1f}. Monitor for updates."
+        elif trust_score >= 40:
+            return f"Elevated risk with {total_cves} CVE(s), average CVSS {avg_cvss:.1f}, and {kev_count} known exploit(s)."
+        elif trust_score >= 20:
+            return f"High risk: {total_cves} CVE(s) with average CVSS {avg_cvss:.1f} and {kev_count} actively exploited."
+        else:
+            return f"Critical risk: {total_cves} CVE(s) with severe CVSS scores and {kev_count} active exploits. Immediate action required."
+    
+    def _calculate_confidence(self, cvss_scores: List[float], epss_scores: List[float], total_cves: int) -> str:
+        """Calculate confidence level based on data completeness"""
+        if total_cves == 0:
+            return "High"
+        
+        cvss_coverage = len(cvss_scores) / total_cves if total_cves > 0 else 0
+        epss_coverage = len(epss_scores) / total_cves if total_cves > 0 else 0
+        
+        avg_coverage = (cvss_coverage + epss_coverage) / 2
+        
+        if avg_coverage >= 0.8:
+            return "High"
+        elif avg_coverage >= 0.5:
+            return "Medium"
+        else:
+            return "Low"
     
     def _score_vulnerability_history(self, cves: List[Dict]) -> float:
         """Score based on CVE count and severity (0-30 points)"""
@@ -241,67 +358,3 @@ class TrustScorer:
             return "high"
         else:
             return "critical"
-    
-    def _calculate_confidence(self, assessment_data: Dict) -> str:
-        """Calculate confidence in the assessment"""
-        # High confidence if we have multiple data sources
-        has_cves = len(assessment_data.get('cves', [])) > 0
-        has_kevs = len(assessment_data.get('kevs', [])) > 0
-        has_product_data = assessment_data.get('product_data') is not None
-        
-        data_sources = sum([has_cves, has_kevs, has_product_data])
-        
-        if data_sources >= 2:
-            return "high"
-        elif data_sources == 1:
-            return "medium"
-        else:
-            return "low"
-    
-    def _get_component_explanation(self, component: str, score: float, data: Dict) -> str:
-        """Generate human-readable explanation for component score"""
-        
-        max_score = self.WEIGHTS[component]
-        percentage = (score / max_score * 100) if max_score > 0 else 0
-        
-        explanations = {
-            "vulnerability_history": self._explain_vuln_history(score, data.get('cves', [])),
-            "kev_presence": self._explain_kev(score, data.get('kevs', [])),
-            "product_maturity": self._explain_maturity(score, data.get('product_data')),
-            "security_practices": f"Security practices assessment contributed {score:.1f}/{max_score} points",
-            "incident_signals": f"Incident and abuse signals contributed {score:.1f}/{max_score} points",
-            "data_compliance": f"Data handling and compliance contributed {score:.1f}/{max_score} points"
-        }
-        
-        return explanations.get(component, f"Scored {score:.1f}/{max_score} points ({percentage:.0f}%)")
-    
-    def _explain_vuln_history(self, score: float, cves: List[Dict]) -> str:
-        """Explain vulnerability history score"""
-        total = len(cves)
-        if total == 0:
-            return f"No CVEs found - received maximum {score:.1f}/30 points"
-        
-        critical = sum(1 for cve in cves if cve.get('severity') == 'CRITICAL')
-        high = sum(1 for cve in cves if cve.get('severity') == 'HIGH')
-        
-        return f"{total} CVEs found ({critical} critical, {high} high severity) - scored {score:.1f}/30 points"
-    
-    def _explain_kev(self, score: float, kevs: List[Dict]) -> str:
-        """Explain KEV score"""
-        total = len(kevs)
-        if total == 0:
-            return f"No known exploited vulnerabilities - received maximum {score:.1f}/25 points"
-        
-        ransomware = sum(1 for kev in kevs if kev.get('known_ransomware') == 'Known')
-        
-        if ransomware > 0:
-            return f"{total} KEVs found (including {ransomware} used in ransomware) - scored {score:.1f}/25 points"
-        return f"{total} known exploited vulnerabilities found - scored {score:.1f}/25 points"
-    
-    def _explain_maturity(self, score: float, product_data: Dict) -> str:
-        """Explain product maturity score"""
-        if not product_data:
-            return f"Limited product data available - scored {score:.1f}/15 points"
-        
-        votes = product_data.get('votes', 0)
-        return f"Product has {votes} votes indicating adoption level - scored {score:.1f}/15 points"
