@@ -3,9 +3,7 @@ Rule-based trust scoring system with transparent calculations
 """
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
-import logging
 
-logger = logging.getLogger(__name__)
 
 
 class TrustScorer:

@@ -1,7 +1,6 @@
 """
 Core assessment engine that orchestrates data gathering and analysis
 """
-import logging
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
@@ -12,8 +11,6 @@ from database import AssessmentCache
 from evidence import EvidenceRegistry
 from trust_scorer import TrustScorer
 from virustotal_trust_scorer import VirusTotalTrustScorer
-
-logger = logging.getLogger(__name__)
 
 class SecurityAssessor:
     """Main assessment engine"""
@@ -32,7 +29,6 @@ class SecurityAssessor:
         self.use_multi_agent = config.USE_MULTI_AGENT
         
         if self.use_multi_agent:
-            logger.info("Initializing MULTI-AGENT analyzer (Research + Verification + Synthesis)")
             self.multi_agent = MultiAgentAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
             # Always initialize single-agent for utility functions
             self.analyzer = GeminiAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
@@ -164,7 +160,6 @@ class SecurityAssessor:
         classification = self.analyzer.classify_software(entity_info, product_data)
         
         # Step 4: Gather security data
-        logger.info("Step 4: Gathering security data (CVE, KEV)")
         if progress_callback:
             progress_callback({
                 "stage": "security_data",
@@ -215,127 +210,186 @@ class SecurityAssessor:
         Multi-agent assessment workflow with research → verification → synthesis
         """
 
-        # Use single-agent for structured components (needed for trust scoring)
-
-        security_practices = self.analyzer.analyze_security_practices(
-            entity_info, evidence_registry
-        )
-        
-        incidents_analysis = self.analyzer.analyze_incidents(
-            entity_info, evidence_registry
-        )
-        
-        # Skip data compliance and deployment controls for vendor-only assessments
-        is_vendor_only = not entity_info.get('product_name')
-        
-        if is_vendor_only:
-
-            data_compliance = {
-                'not_applicable': True,
-                'reason': 'Data compliance assessment requires a specific product',
-                'data_source': 'not_applicable'
-            }
-            deployment_controls = {
-                'not_applicable': True,
-                'reason': 'Deployment controls assessment requires a specific product',
-                'data_source': 'not_applicable'
-            }
-        else:
-            data_compliance = self.analyzer.analyze_data_compliance(
-                entity_info, evidence_registry
-            )
-            
-            deployment_controls = self.analyzer.analyze_deployment_controls(
-                entity_info, classification, evidence_registry
-            )
-        
         # Determine analysis mode based on data source
         is_virustotal_analysis = virustotal_data is not None
         
-        # Run multi-agent verification analysis
-
-        multi_agent_result = self.multi_agent.analyze_with_verification(
-            entity_info=entity_info,
-            cve_data=security_data['cves'],
-            kev_data=security_data['kevs'],
-            security_practices=security_practices,
-            incidents=incidents_analysis,
-            data_compliance=data_compliance,
-            deployment_controls=deployment_controls,
-            progress_callback=progress_callback,
-            virustotal_data=virustotal_data,
-            is_virustotal_analysis=is_virustotal_analysis
-        )
-        
-        # Extract verified vulnerability analysis from multi-agent result
-        vuln_analysis = multi_agent_result.get('vulnerability_analysis', {})
-        
-        # Fallback to single-agent if multi-agent failed
-        if not vuln_analysis or 'error' in multi_agent_result:
-            vuln_analysis = self.analyzer.analyze_vulnerabilities(
-                security_data['cves'],
-                security_data['kevs'],
-                evidence_registry
-            )
-        
-        # Calculate rule-based trust score (use VirusTotal scorer if applicable)
-        if virustotal_data:
-
-            trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
-        else:
-
-            # Fetch EPSS scores for all CVEs
-            cve_ids = [cve.get('cve_id') for cve in security_data['cves'] if cve.get('cve_id')]
-            print(f"\n=== EPSS FETCHING IN ASSESSOR ===")
-            print(f"CVE IDs to fetch EPSS for: {cve_ids}")
-            epss_data = self.epss.get_epss_scores(cve_ids) if cve_ids else {}
-            print(f"EPSS data fetched: {epss_data}")
-            print(f"================================\n")
+        # For VirusTotal-only analysis (SHA1 hash lookup), skip LLM analysis
+        if is_virustotal_analysis:
+            if progress_callback:
+                progress_callback({
+                    "stage": "analysis",
+                    "status": "in_progress",
+                    "details": "Processing VirusTotal data (no LLM analysis required)"
+                })
             
-            scoring_data = {
-                'cves': security_data['cves'],
-                'kevs': security_data['kevs'],
-                'epss_data': epss_data,
-                'product_data': product_data,
-                'security_practices': security_practices,
-                'incidents': incidents_analysis,
-                'data_compliance': data_compliance
+            # Use empty/default values for LLM-based analysis
+            security_practices = {
+                'rating': 'unknown',
+                'bug_bounty': False,
+                'disclosure_policy': False,
+                'security_team_visible': False,
+                'patch_cadence': 'unknown',
+                'summary': 'Security practices assessment not applicable for file hash analysis',
+                'evidence_refs': []
             }
-            trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
-        
-        # Suggest alternatives
-
-        alternatives, alt_evidence_refs = self.analyzer.suggest_alternatives(
-            entity_info, classification, trust_score, evidence_registry
-        )
-        
-        # Score each alternative with the same CVSS+EPSS+KEV system
-        logger.info(f"Scoring {len(alternatives)} alternatives")
-        scored_alternatives = []
-        for alt in alternatives:
-            alt_product = alt.get('product_name')
-            alt_vendor = alt.get('vendor')
             
-            if alt_product:
-                logger.info(f"  Scoring alternative: {alt_product} ({alt_vendor})")
-                alt_assessment = self.assess_alternative(alt_product, alt_vendor)
+            incidents_analysis = {
+                'count': 0,
+                'severity': 'none',
+                'incidents': [],
+                'rating': 'unknown',
+                'summary': 'Security incidents assessment not applicable for file hash analysis',
+                'evidence_refs': []
+            }
+            
+            data_compliance = {
+                'not_applicable': True,
+                'reason': 'Data compliance assessment not applicable for file hash analysis',
+                'data_source': 'not_applicable'
+            }
+            
+            deployment_controls = {
+                'not_applicable': True,
+                'reason': 'Deployment controls assessment not applicable for file hash analysis',
+                'data_source': 'not_applicable'
+            }
+            
+            # Simple vulnerability analysis from VirusTotal detection stats
+            vuln_analysis = {
+                'summary': f"VirusTotal analysis: {virustotal_data.get('detection_ratio', '0/0')} detections",
+                'trend': 'stable',
+                'exploitation_risk': 'high' if virustotal_data.get('detection_stats', {}).get('malicious', 0) > 0 else 'low',
+                'severity_distribution': {},
+                'critical_findings': [],
+                'key_concerns': [],
+                'positive_signals': [],
+                'evidence_quality': 'high',
+                'evidence_refs': []
+            }
+            
+            # Calculate VirusTotal-based trust score
+            trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
+            
+            # No alternatives for file hash analysis
+            alternatives = []
+            
+        else:
+            # Normal product assessment with LLM analysis
+
+            # Use single-agent for structured components (needed for trust scoring)
+
+            security_practices = self.analyzer.analyze_security_practices(
+                entity_info, evidence_registry
+            )
+            
+            incidents_analysis = self.analyzer.analyze_incidents(
+                entity_info, evidence_registry
+            )
+            
+            # Skip data compliance and deployment controls for vendor-only assessments
+            is_vendor_only = not entity_info.get('product_name')
+            
+            if is_vendor_only:
+
+                data_compliance = {
+                    'not_applicable': True,
+                    'reason': 'Data compliance assessment requires a specific product',
+                    'data_source': 'not_applicable'
+                }
+                deployment_controls = {
+                    'not_applicable': True,
+                    'reason': 'Deployment controls assessment requires a specific product',
+                    'data_source': 'not_applicable'
+                }
+            else:
+                data_compliance = self.analyzer.analyze_data_compliance(
+                    entity_info, evidence_registry
+                )
                 
-                # Merge LLM suggestions with actual scores
-                alt['trust_score'] = alt_assessment.get('trust_score')
-                alt['risk_level'] = alt_assessment.get('risk_level')
-                alt['cve_count'] = alt_assessment.get('cve_count', 0)
-                alt['kev_count'] = alt_assessment.get('kev_count', 0)
-                alt['scoring_breakdown'] = alt_assessment.get('scoring_breakdown', {})
-                alt['assessed'] = alt_assessment.get('trust_score') is not None
+                deployment_controls = self.analyzer.analyze_deployment_controls(
+                    entity_info, classification, evidence_registry
+                )
+            
+            # Run multi-agent verification analysis
+
+            multi_agent_result = self.multi_agent.analyze_with_verification(
+                entity_info=entity_info,
+                cve_data=security_data['cves'],
+                kev_data=security_data['kevs'],
+                security_practices=security_practices,
+                incidents=incidents_analysis,
+                data_compliance=data_compliance,
+                deployment_controls=deployment_controls,
+                progress_callback=progress_callback,
+                virustotal_data=virustotal_data,
+                is_virustotal_analysis=is_virustotal_analysis
+            )
+            
+            # Extract verified vulnerability analysis from multi-agent result
+            vuln_analysis = multi_agent_result.get('vulnerability_analysis', {})
+            
+            # Fallback to single-agent if multi-agent failed
+            if not vuln_analysis or 'error' in multi_agent_result:
+                vuln_analysis = self.analyzer.analyze_vulnerabilities(
+                    security_data['cves'],
+                    security_data['kevs'],
+                    evidence_registry
+                )
+            
+            # Calculate rule-based trust score (use VirusTotal scorer if applicable)
+            if virustotal_data:
+
+                trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
+            else:
+
+                # Fetch EPSS scores for all CVEs
+                cve_ids = [cve.get('cve_id') for cve in security_data['cves'] if cve.get('cve_id')]
+                print(f"\n=== EPSS FETCHING IN ASSESSOR ===")
+                print(f"CVE IDs to fetch EPSS for: {cve_ids}")
+                epss_data = self.epss.get_epss_scores(cve_ids) if cve_ids else {}
+                print(f"EPSS data fetched: {epss_data}")
+                print(f"================================\n")
                 
-                scored_alternatives.append(alt)
+                scoring_data = {
+                    'cves': security_data['cves'],
+                    'kevs': security_data['kevs'],
+                    'epss_data': epss_data,
+                    'product_data': product_data,
+                    'security_practices': security_practices,
+                    'incidents': incidents_analysis,
+                    'data_compliance': data_compliance
+                }
+                trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
+            
+            # Suggest alternatives (only for normal product assessments)
+            alternatives, alt_evidence_refs = self.analyzer.suggest_alternatives(
+                entity_info, classification, trust_score, evidence_registry
+            )
+            
+            # Score each alternative with the same CVSS+EPSS+KEV system
+            scored_alternatives = []
+            for alt in alternatives:
+                alt_product = alt.get('product_name')
+                alt_vendor = alt.get('vendor')
+                
+                if alt_product:
+                    alt_assessment = self.assess_alternative(alt_product, alt_vendor)
+                    
+                    # Merge LLM suggestions with actual scores
+                    alt['trust_score'] = alt_assessment.get('trust_score')
+                    alt['risk_level'] = alt_assessment.get('risk_level')
+                    alt['cve_count'] = alt_assessment.get('cve_count', 0)
+                    alt['kev_count'] = alt_assessment.get('kev_count', 0)
+                    alt['scoring_breakdown'] = alt_assessment.get('scoring_breakdown', {})
+                    alt['assessed'] = alt_assessment.get('trust_score') is not None
+                    
+                    scored_alternatives.append(alt)
+            
+            # Sort alternatives by trust score (highest first)
+            scored_alternatives.sort(key=lambda x: x.get('trust_score') or 0, reverse=True)
+            alternatives = scored_alternatives
         
-        # Sort alternatives by trust score (highest first)
-        scored_alternatives.sort(key=lambda x: x.get('trust_score') or 0, reverse=True)
-        alt_scores = ["{} ({})".format(a.get('product_name'), a.get('trust_score')) for a in scored_alternatives]
-        logger.info(f"Alternatives sorted by trust score: {alt_scores}")
-        
-        # Compile final assessment with multi-agent metadata
+        # Compile final assessment
 
         assessment = self._compile_assessment(
             entity_info=entity_info,
@@ -348,30 +402,33 @@ class SecurityAssessor:
             data_compliance=data_compliance,
             deployment_controls=deployment_controls,
             trust_score=trust_score,
-            alternatives=scored_alternatives,
+            alternatives=alternatives,
             evidence_registry=evidence_registry,
             virustotal_data=virustotal_data
         )
         
-        # Add multi-agent metadata
-        assessment['_analysis_mode'] = 'multi-agent'
-        assessment['_multi_agent_metadata'] = multi_agent_result.get('_multi_agent_metadata', {})
-        
-        # Merge multi-agent citations with evidence registry citations
-        if 'citations' in multi_agent_result:
-            # Add multi-agent citations to the existing citations list
-            existing_citations = assessment.get('citations', [])
-            multi_agent_citations = multi_agent_result['citations']
+        # Add analysis mode metadata
+        if is_virustotal_analysis:
+            assessment['_analysis_mode'] = 'virustotal'
+        else:
+            assessment['_analysis_mode'] = 'multi-agent'
+            assessment['_multi_agent_metadata'] = multi_agent_result.get('_multi_agent_metadata', {})
             
-            # Combine and deduplicate by URL
-            all_citations = existing_citations.copy()
-            existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
-            
-            for citation in multi_agent_citations:
-                if citation.get('url') not in existing_urls:
-                    all_citations.append(citation)
-            
-            assessment['citations'] = all_citations
+            # Merge multi-agent citations with evidence registry citations
+            if 'citations' in multi_agent_result:
+                # Add multi-agent citations to the existing citations list
+                existing_citations = assessment.get('citations', [])
+                multi_agent_citations = multi_agent_result['citations']
+                
+                # Combine and deduplicate by URL
+                all_citations = existing_citations.copy()
+                existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
+                
+                for citation in multi_agent_citations:
+                    if citation.get('url') not in existing_urls:
+                        all_citations.append(citation)
+                
+                assessment['citations'] = all_citations
         
         # Cache the result
         product_name = entity_info.get('product_name')
@@ -479,14 +536,12 @@ class SecurityAssessor:
         )
         
         # Score each alternative with the same CVSS+EPSS+KEV system
-        logger.info(f"Scoring {len(alternatives)} alternatives")
         scored_alternatives = []
         for alt in alternatives:
             alt_product = alt.get('product_name')
             alt_vendor = alt.get('vendor')
             
             if alt_product:
-                logger.info(f"  Scoring alternative: {alt_product} ({alt_vendor})")
                 alt_assessment = self.assess_alternative(alt_product, alt_vendor)
                 
                 # Merge LLM suggestions with actual scores
@@ -502,7 +557,6 @@ class SecurityAssessor:
         # Sort alternatives by trust score (highest first)
         scored_alternatives.sort(key=lambda x: x.get('trust_score') or 0, reverse=True)
         alt_scores = ["{} ({})".format(a.get('product_name'), a.get('trust_score')) for a in scored_alternatives]
-        logger.info(f"Alternatives sorted by trust score: {alt_scores}")
         
         # Step 9: Compile final assessment
 
@@ -545,7 +599,6 @@ class SecurityAssessor:
         """Gather product information from ProductHunt"""
         
         if not self.product_hunt:
-            logger.warning("ProductHunt API not configured")
             return None
         
         try:
@@ -565,7 +618,6 @@ class SecurityAssessor:
             return data
             
         except Exception as e:
-            logger.error(f"Error gathering product data: {e}")
             return None
     
     def _format_virustotal_as_product_data(self, virustotal_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -634,35 +686,28 @@ class SecurityAssessor:
             
             if cached_cves:
                 cves = cached_cves
-                logger.info(f"Using cached CVEs: {len(cves)} found")
             else:
                 cves = self.nvd.search_cves(vendor, product, limit=200)
                 if cves:
                     self.cache.save_raw_data(cache_key, "cve", cves, expiry_hours=24)
             
-            logger.info(f"Total CVEs from NVD: {len(cves)}")
-            
         except Exception as e:
-            logger.error(f"Error gathering CVE data from NVD: {e}")
+            pass
         
         try:
             # Gather KEV data from CISA
-
             cache_key = f"kev_{vendor}_{product or 'all'}"
             cached_kevs = self.cache.get_raw_data(cache_key)
             
             if cached_kevs:
                 kevs = cached_kevs
-                logger.info(f"Using cached KEVs: {len(kevs)} found")
             else:
                 kevs = self.cisa_kev.search_kev(vendor, product)
                 if kevs:
                     self.cache.save_raw_data(cache_key, "kev", kevs, expiry_hours=24)
             
-            logger.info(f"Total KEVs from CISA: {len(kevs)}")
-            
         except Exception as e:
-            logger.error(f"Error gathering KEV data: {e}")
+            pass
         
         return {
             'cves': cves,
@@ -672,8 +717,6 @@ class SecurityAssessor:
     def _aggregate_cves_by_year(self, cves: list) -> Dict[str, int]:
         """Aggregate CVEs by year for timeline visualization"""
         timeline = {}
-        
-        logger.info(f"Aggregating {len(cves)} CVEs by year...")
         
         for cve in cves:
             try:
@@ -686,7 +729,6 @@ class SecurityAssessor:
                 continue
         
         sorted_timeline = dict(sorted(timeline.items()))
-
         return sorted_timeline  # Sort by year
     
     def _compile_assessment(self, entity_info: Dict, classification: Dict,
@@ -737,9 +779,17 @@ class SecurityAssessor:
                 'topics': product_data.get('topics', []) if product_data else []
             },
             'security_posture': {
+                'total_cves': len(security_data['cves']),
+                'total_kevs': len(security_data['kevs']),
+                'kev_count': len(security_data['kevs']),
+                'critical_cves': vuln_analysis.get('severity_distribution', {}).get('CRITICAL', 0),
+                'high_cves': vuln_analysis.get('severity_distribution', {}).get('HIGH', 0),
+                'medium_cves': vuln_analysis.get('severity_distribution', {}).get('MEDIUM', 0),
+                'low_cves': vuln_analysis.get('severity_distribution', {}).get('LOW', 0),
                 'vulnerability_summary': {
                     'total_cves': len(security_data['cves']),
                     'total_kevs': len(security_data['kevs']),
+                    'summary': vuln_analysis.get('summary'),
                     'trend': vuln_analysis.get('trend'),
                     'exploitation_risk': vuln_analysis.get('exploitation_risk'),
                     'severity_distribution': vuln_analysis.get('severity_distribution', {}),
@@ -910,7 +960,6 @@ class SecurityAssessor:
         Returns:
             Dict with trust_score and security metrics
         """
-        logger.info(f"Assessing alternative: {product_name} ({vendor})")
         
         try:
             # Gather security data (CVE, KEV, EPSS)
@@ -937,7 +986,6 @@ class SecurityAssessor:
             }
             
         except Exception as e:
-            logger.error(f"Error assessing alternative {product_name}: {e}")
             return {
                 'product_name': product_name,
                 'vendor': vendor,

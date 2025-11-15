@@ -3,12 +3,10 @@ Data fetching modules for security assessment
 """
 import requests
 import json
-import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import time
 
-logger = logging.getLogger(__name__)
 
 class ProductHuntAPI:
     """Fetch product information from ProductHunt API"""
@@ -89,7 +87,6 @@ class ProductHuntAPI:
             return None
             
         except Exception as e:
-            logger.error(f"Error fetching from ProductHunt: {e}")
             return None
     
     def _format_product_data(self, node: Dict) -> Dict[str, Any]:
@@ -122,10 +119,8 @@ class NVDAPI:
         
         if api_key:
             self.headers["apiKey"] = api_key
-            logger.info("NVD API initialized with API key (higher rate limits)")
         else:
-            logger.warning("NVD API key not provided - rate limited to 5 requests per 30 seconds")
-        
+            pass
         self.last_request_time = 0
         self.rate_limit_delay = 6 if not api_key else 0.6  # 6 seconds without key, 0.6 with key
         
@@ -353,7 +348,6 @@ class CISAKEVAPI:
                 return {"vulnerabilities": []}
                 
         except Exception as e:
-            logger.error(f"Error fetching CISA KEV catalog: {e}")
             return {"vulnerabilities": []}
     
     def search_kev(self, vendor: str, product: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -463,7 +457,6 @@ class VirusTotalAPI:
                 return None
                 
         except Exception as e:
-            logger.error(f"Error fetching from VirusTotal: {e}")
             return None
     
     def _format_virustotal_data(self, response_data: Dict) -> Dict[str, Any]:
@@ -618,7 +611,6 @@ class EPSSAPI:
                 'cve': cve_list
             }
             
-            logger.info(f"Fetching EPSS scores for {len(cve_ids[:100])} CVEs")
             print(f"\n=== EPSS API REQUEST ===")
             print(f"URL: {self.base_url}")
             print(f"CVE list: {cve_list}")
@@ -650,7 +642,6 @@ class EPSSAPI:
                             }
                             print(f"  {cve_id}: EPSS={item.get('epss')}")
                 
-                logger.info(f"Retrieved EPSS scores for {len(epss_data)} CVEs")
                 print(f"Total EPSS scores retrieved: {len(epss_data)}")
                 print(f"========================\n")
                 return epss_data
@@ -658,5 +649,4 @@ class EPSSAPI:
                 return {}
                 
         except Exception as e:
-            logger.error(f"Error fetching EPSS scores: {e}")
             return {}

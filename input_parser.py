@@ -5,10 +5,8 @@ Input parser to handle various input formats:
 - SHA1 hash: "f53f36c766c615f665dd00de30dc12d2ed4195b9"
 """
 import re
-import logging
 from typing import Dict, Optional
 
-logger = logging.getLogger(__name__)
 
 class InputParser:
     """Parse and normalize various input formats."""

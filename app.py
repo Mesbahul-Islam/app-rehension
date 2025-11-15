@@ -2,7 +2,7 @@
 Flask web application for Security Assessor
 """
 from flask import Flask, render_template, request, jsonify, redirect, url_for, Response
-import logging
+from flask_cors import CORS
 import json
 import queue
 import threading
@@ -14,15 +14,11 @@ from assessor import SecurityAssessor
 from input_parser import InputParser
 from data_sources import VirusTotalAPI
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 # Initialize Flask app
 app = Flask(__name__)
+CORS(app, resources={
+    r"/api/*": {"origins": ["http://localhost:5173", "http://localhost:5000"]}
+})
 app.config.from_object(Config)
 
 # Initialize assessor
@@ -33,15 +29,11 @@ try:
     virustotal_api = None
     if Config.VIRUSTOTAL_API_KEY:
         virustotal_api = VirusTotalAPI(Config.VIRUSTOTAL_API_KEY)
-
-    else:
-        logger.warning("VirusTotal API key not configured - SHA1 hash lookups will not be available")
     
     # Initialize input parser with VirusTotal API
     input_parser = InputParser(virustotal_api=virustotal_api)
 
 except Exception as e:
-    logger.error(f"Failed to initialize Security Assessor: {e}")
     assessor = None
     input_parser = InputParser()  # Fallback without VirusTotal
 
@@ -55,7 +47,7 @@ def index():
     """Home page"""
     return render_template('index.html')
 
-@app.route('/assess', methods=['POST'])
+@app.route('/api/assess', methods=['POST'])
 def assess():
     """Run security assessment"""
     
@@ -78,7 +70,6 @@ def assess():
         from input_parser import InputParser as StaticParser
         if StaticParser.is_sha1(input_text):
             if not virustotal_api:
-                logger.error("SHA1 hash provided but VirusTotal API is not configured")
                 return jsonify({
                     'error': 'SHA1 hash detected but VirusTotal API is not configured. Please add VIRUSTOTAL_API_KEY to your .env file. Get a free API key at: https://www.virustotal.com/gui/join-us',
                     'input_type': 'sha1',
@@ -103,10 +94,6 @@ def assess():
             
             # VirusTotal data is available - proceed with assessment
             vt_data = parsed['virustotal_data']
-
-            logger.info(f"  File: {vt_data.get('primary_name', 'Unknown')}")
-            logger.info(f"  Detection ratio: {vt_data.get('detection_ratio', 'N/A')}")
-            logger.info(f"  File type: {vt_data.get('type', 'Unknown')}")
             
             # Use product name from VirusTotal if available
             if parsed['product_name']:
@@ -173,7 +160,7 @@ def assess():
             try:
                 progress_queue.put(progress_data)
             except Exception as e:
-                logger.error(f"Error in progress callback: {e}")
+                pass
         
         # Run assessment in background thread
         result_container = {}
@@ -202,10 +189,14 @@ def assess():
                 # Store result for later retrieval
                 completed_results[session_id] = result
                 
-                # Signal completion
-                progress_queue.put({"stage": "complete", "status": "completed", "details": "Assessment finished"})
+                # Signal completion with result
+                progress_queue.put({
+                    "stage": "complete", 
+                    "status": "completed", 
+                    "details": "Assessment finished",
+                    "result": result
+                })
             except Exception as e:
-                logger.error(f"Error during assessment: {e}", exc_info=True)
                 error_container['error'] = str(e)
                 progress_queue.put({"stage": "error", "status": "failed", "details": str(e)})
         
@@ -220,12 +211,11 @@ def assess():
         })
         
     except Exception as e:
-        logger.error(f"Error starting assessment: {e}", exc_info=True)
         return jsonify({
             'error': f'Assessment failed: {str(e)}'
         }), 500
 
-@app.route('/progress/<session_id>')
+@app.route('/api/progress/<session_id>')
 def progress(session_id):
     """Server-Sent Events endpoint for progress updates"""
     
@@ -263,7 +253,12 @@ def progress(session_id):
     
     return Response(generate(), mimetype='text/event-stream')
 
-@app.route('/result/<session_id>')
+@app.route('/api/stream/<session_id>')
+def stream(session_id):
+    """Server-Sent Events endpoint for progress updates (alternative endpoint)"""
+    return progress(session_id)
+
+@app.route('/api/result/<session_id>')
 def get_result(session_id):
     """Get the final assessment result"""
     
@@ -282,7 +277,7 @@ def get_result(session_id):
             'error': 'Result not found or not yet available'
         }), 404
 
-@app.route('/history')
+@app.route('/api/history')
 def history():
     """View assessment history"""
     
@@ -295,7 +290,6 @@ def history():
         return render_template('history.html', assessments=assessments)
         
     except Exception as e:
-        logger.error(f"Error fetching history: {e}")
         return render_template('error.html', error=str(e))
 
 @app.route('/assessment/<int:assessment_id>')
@@ -353,7 +347,6 @@ def not_found(e):
 @app.errorhandler(500)
 def server_error(e):
     """500 error handler"""
-    logger.error(f"Server error: {e}")
     return render_template('error.html', error='Internal server error'), 500
 
 if __name__ == '__main__':

@@ -3,11 +3,9 @@ LLM integration using Google Gemini for analysis and synthesis
 """
 from google import genai
 from google.genai import types
-import logging
 from typing import Dict, Any, List, Optional
 import json
 
-logger = logging.getLogger(__name__)
 
 
 class GeminiAnalyzer:
@@ -99,7 +97,6 @@ Be precise and use official names. If information is uncertain, mark confidence 
             return result
             
         except Exception as e:
-            logger.error(f"Error in entity resolution: {e}")
             # Fallback: return input as-is
             return {
                 "product_name": input_text,
@@ -177,7 +174,6 @@ Respond in JSON format:
             return result
             
         except Exception as e:
-            logger.error(f"Error in classification: {e}")
             return {
                 "primary_category": "Unknown",
                 "sub_category": "Unknown",
@@ -296,7 +292,6 @@ Base your analysis ONLY on the provided data. If data is insufficient, indicate 
             return result
             
         except Exception as e:
-            logger.error(f"Error in vulnerability analysis: {e}")
             return {
                 "trend": "insufficient_data",
                 "critical_findings": [],
@@ -396,7 +391,6 @@ Be objective and cite specific evidence. Higher scores indicate more trust/lower
             return result
             
         except Exception as e:
-            logger.error(f"Error in trust score calculation: {e}")
             return {
                 "score": 50,
                 "confidence": "low",
@@ -483,7 +477,6 @@ Only suggest real, well-known alternatives. If you cannot identify suitable alte
             return result.get('alternatives', []), evidence_refs
             
         except Exception as e:
-            logger.error(f"Error in suggesting alternatives: {e}")
             return [], evidence_refs
     
     def analyze_incidents(self, entity_info: Dict, evidence_registry=None) -> Dict[str, Any]:
@@ -530,7 +523,6 @@ If you have NO concrete information about incidents, return count: 0 and severit
             return result
             
         except Exception as e:
-            logger.error(f"Error analyzing incidents: {e}")
             return {
                 "count": 0,
                 "severity": "none",
@@ -586,7 +578,6 @@ Only include concrete information. Use "unknown" if uncertain."""
             return result
             
         except Exception as e:
-            logger.error(f"Error analyzing data compliance: {e}")
             return {
                 "status": "unknown",
                 "certifications": [],
@@ -649,7 +640,6 @@ Only include verified information."""
             return result
             
         except Exception as e:
-            logger.error(f"Error analyzing deployment controls: {e}")
             return {
                 "sso_support": None,
                 "mfa_support": None,
@@ -708,7 +698,6 @@ Respond in JSON format:
             return result
             
         except Exception as e:
-            logger.error(f"Error analyzing security practices: {e}")
             return {
                 "rating": "unknown",
                 "bug_bounty": None,

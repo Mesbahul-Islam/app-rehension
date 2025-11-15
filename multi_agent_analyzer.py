@@ -4,7 +4,6 @@ Multi-agent LLM architecture using LangChain v1.0
 - Verification Agent: Cross-checks facts, validates URLs, and verifies claims
 - Synthesis Agent: Compiles final verified report
 """
-import logging
 import json
 import requests
 from datetime import datetime
@@ -14,7 +13,6 @@ from langchain.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 import google.genai.types as types
 
-logger = logging.getLogger(__name__)
 
 class ProgressCallback:
     """Callback for tracking multi-agent progress"""
@@ -49,9 +47,6 @@ class MultiAgentAnalyzer:
     def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
         """Initialize multi-agent system with LangChain v1.0"""
         
-        logger.info("=" * 60)
-        logger.info("INITIALIZING MULTI-AGENT SYSTEM")
-        logger.info("=" * 60)
         
         self.api_key = api_key
         self.model_name = model
@@ -65,27 +60,17 @@ class MultiAgentAnalyzer:
         )
         
         # Initialize research agent
-        logger.info("Creating Research Agent...")
         self.research_agent = self._create_research_agent()
-        logger.info("✓ Research Agent created")
         
         # Initialize verification agent
-        logger.info("Creating Verification Agent...")
         self.verification_agent = self._create_verification_agent()
-        logger.info("✓ Verification Agent created")
         
         # Initialize synthesis agent
-        logger.info("Creating Synthesis Agent...")
         self.synthesis_agent = self._create_synthesis_agent()
-        logger.info("✓ Synthesis Agent created")
         
-        logger.info("=" * 60)
-        logger.info("MULTI-AGENT SYSTEM READY")
-        logger.info("=" * 60)
 
     def _create_model(self) -> ChatGoogleGenerativeAI:
         """Create a Gemini model instance"""
-        logger.info(f"Creating Gemini model: {self.model_name}")
         return ChatGoogleGenerativeAI(
             model=self.model_name,
             google_api_key=self.api_key,
@@ -169,7 +154,6 @@ class MultiAgentAnalyzer:
                 return json.dumps(analysis, indent=2)
                 
             except Exception as e:
-                logger.error(f"Error analyzing vulnerability data: {e}")
                 return json.dumps({"error": str(e), "cve_count": 0, "kev_count": 0})
         
         @tool
@@ -230,7 +214,6 @@ class MultiAgentAnalyzer:
                 return json.dumps(assessment, indent=2)
                 
             except Exception as e:
-                logger.error(f"Error assessing security practices: {e}")
                 return json.dumps({"error": str(e), "transparency_score": "unknown"})
         
         agent = create_agent(
@@ -614,7 +597,6 @@ You are the SECOND stage - ensure accuracy and prevent hallucinations."""
                 return json.dumps(result, indent=2)
                 
             except Exception as e:
-                logger.error(f"Error prioritizing findings: {e}")
                 return json.dumps({"error": str(e), "prioritized_findings": []})
         
         agent = create_agent(
@@ -734,41 +716,24 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
             
             # Stage 1: Research Agent Analysis
             progress.update("research", "in_progress", "Research Agent analyzing security data...")
-            logger.info("\n" + "=" * 60)
-            logger.info("STAGE 1: RESEARCH AGENT")
-            logger.info("=" * 60)
 
             # Use different prompts based on analysis type
             if is_virustotal_analysis:
                 research_prompt = self._get_virustotal_research_prompt(data_str, virustotal_data)
-                logger.info("Using VirusTotal-specific research prompt")
             else:
                 research_prompt = self._get_standard_research_prompt(data_str)
-                logger.info("Using standard product/vendor research prompt")
             
-            logger.info(f"Research prompt length: {len(research_prompt)} chars")
-            logger.info("Invoking Research Agent...")
             
             research_result = self.research_agent.invoke({
                 "messages": [{"role": "user", "content": research_prompt}]
             })
             
             research_analysis = research_result["messages"][-1].content
-            logger.info(f"✓ Research Agent completed")
-            logger.info(f"Research output length: {len(research_analysis)} chars")
-            logger.info("\n" + "=" * 80)
-            logger.info("RESEARCH AGENT OUTPUT:")
-            logger.info("=" * 80)
-            logger.info(research_analysis)
-            logger.info("=" * 80 + "\n")
             
             progress.update("research", "completed", "Research analysis complete with citations")
 
             # Stage 2: Verification Agent Review
             progress.update("verification", "in_progress", "Verification Agent validating URLs and cross-checking findings...")
-            logger.info("\n" + "=" * 60)
-            logger.info("STAGE 2: VERIFICATION AGENT")
-            logger.info("=" * 60)
 
             # Parse research findings to extract URLs
             research_findings = {}
@@ -780,9 +745,7 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
                 elif "```" in research_text:
                     research_text = research_text.split("```")[1].split("```")[0].strip()
                 research_findings = json.loads(research_text)
-                logger.info(f"✓ Successfully parsed research JSON with {len(research_findings.get('findings', []))} findings")
             except json.JSONDecodeError:
-                logger.warning("⚠ Research output not in valid JSON format")
                 research_findings = {"findings": [], "uncited_assumptions": [research_analysis]}
             
             # Extract all URLs for verification
@@ -793,7 +756,6 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
                         if "url" in citation:
                             all_urls.append(citation["url"])
             
-            logger.info(f"Found {len(all_urls)} URLs to verify")
             
             verification_prompt = f"""Review this research analysis and verify all claims against the source data:
 
@@ -826,29 +788,17 @@ Output in JSON format:
   }}
 }}"""
             
-            logger.info(f"Verification prompt length: {len(verification_prompt)} chars")
-            logger.info("Invoking Verification Agent...")
             
             verification_result = self.verification_agent.invoke({
                 "messages": [{"role": "user", "content": verification_prompt}]
             })
             
             verification_analysis = verification_result["messages"][-1].content
-            logger.info(f"✓ Verification Agent completed")
-            logger.info(f"Verification output length: {len(verification_analysis)} chars")
-            logger.info("\n" + "=" * 80)
-            logger.info("VERIFICATION AGENT OUTPUT:")
-            logger.info("=" * 80)
-            logger.info(verification_analysis)
-            logger.info("=" * 80 + "\n")
             
             progress.update("verification", "completed", "URL validation and verification complete")
 
             # Stage 3: Synthesis Agent Final Report
             progress.update("synthesis", "in_progress", "Synthesis Agent compiling final verified report...")
-            logger.info("\n" + "=" * 60)
-            logger.info("STAGE 3: SYNTHESIS AGENT")
-            logger.info("=" * 60)
 
             synthesis_prompt = f"""Compile final verified security assessment report with citation-based filtering:
 
@@ -877,21 +827,12 @@ Output final assessment in JSON format:
   "data_quality_notes": []
 }}"""
             
-            logger.info(f"Synthesis prompt length: {len(synthesis_prompt)} chars")
-            logger.info("Invoking Synthesis Agent...")
             
             synthesis_result = self.synthesis_agent.invoke({
                 "messages": [{"role": "user", "content": synthesis_prompt}]
             })
             
             final_report = synthesis_result["messages"][-1].content
-            logger.info(f"✓ Synthesis Agent completed")
-            logger.info(f"Final report length: {len(final_report)} chars")
-            logger.info("\n" + "=" * 80)
-            logger.info("SYNTHESIS AGENT OUTPUT:")
-            logger.info("=" * 80)
-            logger.info(final_report)
-            logger.info("=" * 80 + "\n")
             
             progress.update("synthesis", "completed", "Final report generated")
 
@@ -976,19 +917,10 @@ Output final assessment in JSON format:
             if all_citations:
                 final_assessment['citations'] = all_citations
             
-            logger.info("\n" + "=" * 60)
-            logger.info("MULTI-AGENT ANALYSIS COMPLETE")
-            logger.info("=" * 60)
-            logger.info(f"Total citations extracted: {len(all_citations)}")
-            logger.info(f"Verified findings: {len(final_assessment.get('verified_findings', []))}")
-            logger.info(f"Partially verified: {len(final_assessment.get('partially_verified_findings', []))}")
-            logger.info(f"Unverified claims: {len(final_assessment.get('unverified_claims', []))}")
-            logger.info("=" * 60)
             
             return final_assessment
             
         except Exception as e:
-            logger.error(f"Multi-agent analysis failed: {e}", exc_info=True)
             return {
                 "error": str(e),
                 "fallback_analysis": "Multi-agent pipeline failed, falling back to single-agent mode",
