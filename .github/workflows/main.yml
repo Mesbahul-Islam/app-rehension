@@ -29,6 +29,13 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${REGION}-docker.pkg.dev
 
+      - name: List files and check .dockerignore
+        run: |
+          echo "Listing all files in the workspace:"
+          ls -la
+          echo "Content of .dockerignore:"
+          cat .dockerignore
+
       - name: Build and Push Docker Image
         run: |
           docker build -t ${REGION}-docker.pkg.dev/${PROJECT_ID}/${SERVICE_NAME}/app-rehension:${{ github.sha }} .
