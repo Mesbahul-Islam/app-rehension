@@ -10,7 +10,6 @@ import time
 
 logger = logging.getLogger(__name__)
 
-
 class ProductHuntAPI:
     """Fetch product information from ProductHunt API"""
     
@@ -87,7 +86,6 @@ class ProductHuntAPI:
                 if products:
                     return self._format_product_data(products[0].get('node', {}))
                     
-            logger.warning(f"ProductHunt API returned status {response.status_code}")
             return None
             
         except Exception as e:
@@ -114,7 +112,6 @@ class ProductHuntAPI:
             "source_type": "mixed"  # ProductHunt contains both vendor-provided and community data
         }
 
-
 class NVDAPI:
     """Fetch CVE information from NVD (National Vulnerability Database) API 2.0"""
     
@@ -139,7 +136,7 @@ class NVDAPI:
         
         if time_since_last < self.rate_limit_delay:
             sleep_time = self.rate_limit_delay - time_since_last
-            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+
             time.sleep(sleep_time)
         
         self.last_request_time = time.time()
@@ -157,11 +154,10 @@ class NVDAPI:
         # Use keyword search (more reliable than CPE matching with wildcards)
         if clean_product:
             keyword = clean_product
-            logger.info(f"Searching NVD for product: {clean_product}")
+
         else:
             keyword = clean_vendor
-            logger.info(f"Searching NVD for vendor: {clean_vendor}")
-        
+
         # Fetch CVEs in pages
         while len(all_cves) < limit:
             self._rate_limit()
@@ -175,7 +171,6 @@ class NVDAPI:
             response = requests.get(self.base_url, params=params, headers=self.headers, timeout=30)
             
             if response.status_code != 200:
-                logger.warning(f"NVD API returned status {response.status_code}")
                 break
             
             data = response.json()
@@ -329,8 +324,6 @@ class NVDAPI:
             "source_url": f"https://nvd.nist.gov/vuln/detail/{cve_id}"
         }
 
-
-
 class CISAKEVAPI:
     """Fetch Known Exploited Vulnerabilities from CISA KEV catalog"""
     
@@ -357,7 +350,6 @@ class CISAKEVAPI:
                 self._cache_time = datetime.now().timestamp()
                 return data
             else:
-                logger.warning(f"CISA KEV API returned status {response.status_code}")
                 return {"vulnerabilities": []}
                 
         except Exception as e:
@@ -434,7 +426,6 @@ class CISAKEVAPI:
             "source_url": f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={cve_id}"
         }
 
-
 class VirusTotalAPI:
     """Fetch file analysis information from VirusTotal API"""
     
@@ -467,10 +458,8 @@ class VirusTotalAPI:
                 data = response.json()
                 return self._format_virustotal_data(data)
             elif response.status_code == 404:
-                logger.warning(f"Hash {sha1_hash} not found in VirusTotal")
                 return None
             else:
-                logger.warning(f"VirusTotal API returned status {response.status_code}")
                 return None
                 
         except Exception as e:
@@ -565,7 +554,6 @@ class VirusTotalAPI:
         
         return file_info
 
-
 class WebSourceFetcher:
     """Fetch additional context from web sources"""
     
@@ -593,10 +581,9 @@ class WebSourceFetcher:
                 return response.text[:50000]  # Limit content size
                 
         except Exception as e:
-            logger.debug(f"Could not fetch {url}: {e}")
-        
-        return None
+            pass
 
+        return None
 
 class EPSSAPI:
     """Fetch EPSS (Exploit Prediction Scoring System) scores from FIRST.org"""
@@ -668,7 +655,6 @@ class EPSSAPI:
                 print(f"========================\n")
                 return epss_data
             else:
-                logger.warning(f"EPSS API returned status {response.status_code}")
                 return {}
                 
         except Exception as e:

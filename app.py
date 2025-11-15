@@ -32,14 +32,13 @@ try:
     virustotal_api = None
     if Config.VIRUSTOTAL_API_KEY:
         virustotal_api = VirusTotalAPI(Config.VIRUSTOTAL_API_KEY)
-        logger.info("VirusTotal API initialized successfully")
+
     else:
         logger.warning("VirusTotal API key not configured - SHA1 hash lookups will not be available")
     
     # Initialize input parser with VirusTotal API
     input_parser = InputParser(virustotal_api=virustotal_api)
-    
-    logger.info("Security Assessor initialized successfully")
+
 except Exception as e:
     logger.error(f"Failed to initialize Security Assessor: {e}")
     assessor = None
@@ -50,12 +49,10 @@ progress_queues = {}
 # Store completed results (keyed by session ID)
 completed_results = {}
 
-
 @app.route('/')
 def index():
     """Home page"""
     return render_template('index.html')
-
 
 @app.route('/assess', methods=['POST'])
 def assess():
@@ -75,9 +72,7 @@ def assess():
         
         if not input_text:
             return jsonify({'error': 'Please provide a product name, vendor, SHA1 hash, or URL'}), 400
-        
-        logger.info(f"Assessment request for: {input_text} [session: {session_id}]")
-        
+
         # Check if input is SHA1 - must have VirusTotal configured
         from input_parser import InputParser as StaticParser
         if StaticParser.is_sha1(input_text):
@@ -92,13 +87,11 @@ def assess():
         
         # Parse input to detect format (will perform VirusTotal lookup for SHA1)
         parsed = input_parser.parse_input(input_text)
-        logger.info(f"Parsed input type: {parsed['input_type']}")
-        
+
         # For SHA1 hashes, VirusTotal lookup is MANDATORY
         if parsed['input_type'] == 'sha1':
             if not parsed.get('virustotal_data'):
                 # This means VirusTotal lookup failed or hash not found
-                logger.warning(f"SHA1 hash provided: {parsed['sha1'][:8]}... - No VirusTotal data available")
                 return jsonify({
                     'error': f'SHA1 hash {parsed["sha1"][:8]}... not found in VirusTotal database. The file may not have been scanned yet. Please upload the file to VirusTotal first, or provide the product name directly.',
                     'input_type': 'sha1',
@@ -109,7 +102,7 @@ def assess():
             
             # VirusTotal data is available - proceed with assessment
             vt_data = parsed['virustotal_data']
-            logger.info(f"✓ VirusTotal lookup successful for SHA1: {parsed['sha1'][:8]}...")
+
             logger.info(f"  File: {vt_data.get('primary_name', 'Unknown')}")
             logger.info(f"  Detection ratio: {vt_data.get('detection_ratio', 'N/A')}")
             logger.info(f"  File type: {vt_data.get('type', 'Unknown')}")
@@ -120,14 +113,12 @@ def assess():
             else:
                 # Fall back to primary file name
                 assessment_input = vt_data.get('primary_name', f"[SHA1: {parsed['sha1'][:8]}...]")
-            
-            logger.info(f"Using assessment input from VirusTotal: {assessment_input}")
-        
+
         # For vendor_product format, pass the product name only
         # The assessor will try to resolve the vendor internally via LLM
         if parsed['input_type'] == 'vendor_product':
             # Use product name for assessment, but log vendor for reference
-            logger.info(f"Vendor detected: {parsed['vendor']}, Product: {parsed['product_name']}")
+
             assessment_input = parsed['product_name']
         else:
             assessment_input = input_text
@@ -192,7 +183,6 @@ def assess():
             'error': f'Assessment failed: {str(e)}'
         }), 500
 
-
 @app.route('/progress/<session_id>')
 def progress(session_id):
     """Server-Sent Events endpoint for progress updates"""
@@ -223,14 +213,13 @@ def progress(session_id):
                     yield f": keepalive\n\n"
                     
         except GeneratorExit:
-            logger.info(f"Client disconnected from progress stream: {session_id}")
+            pass
         finally:
             # Cleanup
             if session_id in progress_queues:
                 del progress_queues[session_id]
     
     return Response(generate(), mimetype='text/event-stream')
-
 
 @app.route('/result/<session_id>')
 def get_result(session_id):
@@ -251,7 +240,6 @@ def get_result(session_id):
             'error': 'Result not found or not yet available'
         }), 404
 
-
 @app.route('/history')
 def history():
     """View assessment history"""
@@ -268,12 +256,10 @@ def history():
         logger.error(f"Error fetching history: {e}")
         return render_template('error.html', error=str(e))
 
-
 @app.route('/compare')
 def compare():
     """Compare multiple products"""
     return render_template('compare.html')
-
 
 @app.route('/api/health')
 def health():
@@ -292,19 +278,16 @@ def health():
     status_code = 200 if assessor else 503
     return jsonify(health_status), status_code
 
-
 @app.errorhandler(404)
 def not_found(e):
     """404 error handler"""
     return render_template('error.html', error='Page not found'), 404
-
 
 @app.errorhandler(500)
 def server_error(e):
     """500 error handler"""
     logger.error(f"Server error: {e}")
     return render_template('error.html', error='Internal server error'), 500
-
 
 if __name__ == '__main__':
     if not Config.GEMINI_API_KEY:

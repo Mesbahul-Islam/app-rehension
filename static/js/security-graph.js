@@ -30,26 +30,27 @@ function renderSecurityEcosystemGraph(assessment) {
         nodes: {
             shape: 'dot',
             font: {
-                size: 14,
-                face: 'Arial',
-                color: '#333'
+                size: 16,
+                face: 'Arial, sans-serif',
+                color: '#333',
+                bold: { color: '#000' }
             },
-            borderWidth: 2,
-            borderWidthSelected: 4,
+            borderWidth: 3,
+            borderWidthSelected: 5,
             shadow: {
                 enabled: true,
-                color: 'rgba(0,0,0,0.1)',
-                size: 5,
-                x: 2,
-                y: 2
+                color: 'rgba(0,0,0,0.2)',
+                size: 8,
+                x: 3,
+                y: 3
             }
         },
         edges: {
-            width: 2,
+            width: 3,
             color: {
-                color: '#848484',
-                highlight: '#667eea',
-                hover: '#667eea'
+                color: '#666666',
+                highlight: '#4a90e2',
+                hover: '#4a90e2'
             },
             smooth: {
                 enabled: true,
@@ -59,13 +60,17 @@ function renderSecurityEcosystemGraph(assessment) {
             arrows: {
                 to: {
                     enabled: true,
-                    scaleFactor: 0.5
+                    scaleFactor: 0.8
                 }
             },
             font: {
-                size: 11,
-                align: 'middle',
-                color: '#666'
+                size: 16,
+                align: 'top',
+                color: '#000',
+                background: 'rgba(255, 255, 255, 0.9)',
+                strokeWidth: 3,
+                strokeColor: '#ffffff',
+                bold: true
             }
         },
         physics: {
@@ -77,7 +82,17 @@ function renderSecurityEcosystemGraph(assessment) {
             navigationButtons: true,
             keyboard: true,
             zoomView: true,
-            dragView: true
+            dragView: true,
+            tooltipStyle: 'width: 400px; max-width: 400px; font-size: 14px; line-height: 1.6; padding: 12px; background: white; border: 2px solid #333; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2);'
+        },
+        nodes: {
+            chosen: {
+                node: function(values, id, selected, hovering) {
+                    if (hovering) {
+                        values.borderWidth = 4;
+                    }
+                }
+            }
         },
         layout: {
             hierarchical: {
@@ -98,11 +113,45 @@ function renderSecurityEcosystemGraph(assessment) {
     const data = { nodes: nodes, edges: edges };
     networkInstance = new vis.Network(container, data, options);
     
+    // Create custom HTML tooltip element
+    createCustomTooltip(container);
+    
     // Add event listeners
     setupGraphInteractions(networkInstance, assessment);
     
     // Log graph statistics
     console.log(`Security graph created: ${nodes.length} nodes, ${edges.length} edges`);
+}
+
+/**
+ * Create custom HTML tooltip element for rich tooltips
+ * @param {HTMLElement} container - Graph container element
+ */
+function createCustomTooltip(container) {
+    // Remove existing tooltip if any
+    const existingTooltip = document.getElementById('graph-custom-tooltip');
+    if (existingTooltip) {
+        existingTooltip.remove();
+    }
+    
+    // Create tooltip element
+    const tooltip = document.createElement('div');
+    tooltip.id = 'graph-custom-tooltip';
+    tooltip.style.cssText = `
+        position: absolute;
+        display: none;
+        max-width: 400px;
+        padding: 12px 16px;
+        background: white;
+        border: 2px solid #333;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        font-size: 14px;
+        line-height: 1.6;
+        z-index: 1000;
+        pointer-events: none;
+    `;
+    document.body.appendChild(tooltip);
 }
 
 /**
@@ -125,19 +174,19 @@ function buildGraphData(assessment) {
     nodes.push({
         id: productId,
         label: productName,
-        title: `<b>${productName}</b><br>Trust Score: ${assessment.trust_score.total_score}/100<br>Category: ${assessment.classification.category}`,
+        title: `<b>🎯 PRIMARY PRODUCT</b><br><br><b>Name:</b> ${productName}<br><b>Trust Score:</b> ${assessment.trust_score.total_score}/100<br><b>Category:</b> ${assessment.classification.category}<br><b>Risk Level:</b> ${assessment.classification.risk_level}<br><br><i>Click to see full details</i>`,
         group: 'product',
-        size: 40,
+        size: 45,
         level: 2,  // Center level
         color: {
-            border: '#2980b9',
-            background: '#3498db',
+            border: '#1565C0',
+            background: '#1E88E5',
             highlight: {
-                border: '#1f5f8b',
-                background: '#5dade2'
+                border: '#0D47A1',
+                background: '#42A5F5'
             }
         },
-        font: { size: 18, color: '#fff', bold: true },
+        font: { size: 20, color: '#fff', bold: true },
         mass: 5  // Heavy node to stay central
     });
     
@@ -147,19 +196,19 @@ function buildGraphData(assessment) {
         nodes.push({
             id: vendorId,
             label: entity.vendor,
-            title: `<b>Vendor:</b> ${entity.vendor}`,
+            title: `<b>🏢 VENDOR / MANUFACTURER</b><br><br><b>Company:</b> ${entity.vendor}<br><br><i>The organization that develops and maintains this product</i>`,
             group: 'vendor',
-            size: 30,
+            size: 32,
             level: 0,  // Leftmost - source
             color: {
-                border: '#1e8449',
-                background: '#27ae60',
+                border: '#2E7D32',
+                background: '#43A047',
                 highlight: {
-                    border: '#145a32',
-                    background: '#52be80'
+                    border: '#1B5E20',
+                    background: '#66BB6A'
                 }
             },
-            font: { size: 16, color: '#fff' },
+            font: { size: 17, color: '#fff', bold: true },
             mass: 3
         });
         
@@ -167,10 +216,10 @@ function buildGraphData(assessment) {
         edges.push({
             from: vendorId,
             to: productId,
-            label: 'owns',
-            width: 4,
-            color: { color: '#27ae60' },
-            arrows: { to: { scaleFactor: 0.8 } }
+            label: 'DEVELOPS',
+            width: 5,
+            color: { color: '#43A047' },
+            arrows: { to: { scaleFactor: 1.0 } }
         });
     }
     
@@ -183,23 +232,24 @@ function buildGraphData(assessment) {
         const severity = cve.severity || 'UNKNOWN';
         const cvssScore = cve.cvss_v3 || 'N/A';
         
-        // Color based on severity
+        // Color based on severity - more distinct and vibrant colors
         const severityColors = {
-            'CRITICAL': { border: '#7d0e0e', background: '#c0392b' },
-            'HIGH': { border: '#a93226', background: '#e74c3c' },
-            'MEDIUM': { border: '#b9770e', background: '#f39c12' },
-            'LOW': { border: '#626567', background: '#95a5a6' },
-            'UNKNOWN': { border: '#566573', background: '#7f8c8d' }
+            'CRITICAL': { border: '#B71C1C', background: '#D32F2F', icon: '🔴' },
+            'HIGH': { border: '#E65100', background: '#FF6F00', icon: '🟠' },
+            'MEDIUM': { border: '#F57F17', background: '#FBC02D', icon: '🟡' },
+            'LOW': { border: '#455A64', background: '#607D8B', icon: '🔵' },
+            'UNKNOWN': { border: '#424242', background: '#616161', icon: '⚪' }
         };
         
         const colors = severityColors[severity] || severityColors['UNKNOWN'];
+        const icon = colors.icon;
         
         nodes.push({
             id: cveId,
-            label: cveId,
-            title: `<b>${cveId}</b><br>Severity: ${severity}<br>CVSS: ${cvssScore}<br>${cve.summary ? cve.summary.substring(0, 100) + '...' : ''}`,
+            label: `${icon} ${cveId}`,
+            title: `<b>🐛 VULNERABILITY</b><br><br><b>CVE ID:</b> ${cveId}<br><b>Severity:</b> ${severity}<br><b>CVSS Score:</b> ${cvssScore}<br><br>${cve.summary ? '<b>Description:</b><br>' + cve.summary.substring(0, 200) + '...' : ''}<br><br><i>Click to view on NVD database</i>`,
             group: 'cve',
-            size: 12 + (severity === 'CRITICAL' ? 6 : severity === 'HIGH' ? 4 : 0),
+            size: 14 + (severity === 'CRITICAL' ? 8 : severity === 'HIGH' ? 5 : 2),
             level: 3,  // Right of product - affected by
             color: {
                 border: colors.border,
@@ -209,7 +259,7 @@ function buildGraphData(assessment) {
                     background: colors.background
                 }
             },
-            font: { size: 10, color: '#fff' },
+            font: { size: 11, color: '#fff', bold: true },
             mass: 1
         });
         
@@ -217,8 +267,8 @@ function buildGraphData(assessment) {
         edges.push({
             from: productId,
             to: cveId,
-            label: 'affected by',
-            width: severity === 'CRITICAL' ? 3 : severity === 'HIGH' ? 2 : 1,
+            label: severity === 'CRITICAL' ? 'CRITICAL VULN' : severity === 'HIGH' ? 'HIGH VULN' : 'HAS VULN',
+            width: severity === 'CRITICAL' ? 4 : severity === 'HIGH' ? 3 : 2,
             color: { color: colors.background },
             dashes: false
         });
@@ -233,31 +283,31 @@ function buildGraphData(assessment) {
         nodes.push({
             id: kevId,
             label: `⚠️ ${kev.cve_id}`,
-            title: `<b>KNOWN EXPLOITED</b><br>${kev.cve_id}<br>${kev.vulnerability_name}<br>Added: ${kev.date_added}<br>Action Required: ${kev.required_action}`,
+            title: `<b>⚠️ ACTIVELY EXPLOITED VULNERABILITY</b><br><br><b>CVE:</b> ${kev.cve_id}<br><b>Name:</b> ${kev.vulnerability_name}<br><b>Added to KEV:</b> ${kev.date_added}<br><b>Required Action:</b> ${kev.required_action}<br><br><i>This vulnerability is being actively exploited in the wild!<br>Click to view CISA KEV catalog</i>`,
             group: 'kev',
-            size: 18,
+            size: 22,
             level: 3,  // Same level as CVEs
             color: {
-                border: '#641e16',
-                background: '#8b0000',
+                border: '#880E4F',
+                background: '#C2185B',
                 highlight: {
-                    border: '#4a0e0e',
-                    background: '#a30000'
+                    border: '#560027',
+                    background: '#E91E63'
                 }
             },
-            font: { size: 11, color: '#fff', bold: true },
+            font: { size: 12, color: '#fff', bold: true },
             mass: 2,
-            borderWidth: 3
+            borderWidth: 4
         });
         
         // Edge: KEV → Product (actively exploited)
         edges.push({
             from: productId,
             to: kevId,
-            label: 'exploited',
-            width: 4,
-            color: { color: '#8b0000' },
-            dashes: [5, 5]  // Dashed line for urgency
+            label: '⚠️ EXPLOITED',
+            width: 5,
+            color: { color: '#C2185B' },
+            dashes: [8, 8]  // Dashed line for urgency
         });
     });
     
@@ -269,20 +319,20 @@ function buildGraphData(assessment) {
         
         nodes.push({
             id: altId,
-            label: altName,
-            title: `<b>Alternative:</b> ${altName}<br>Trust Score: ${altScore}<br>${alt.rationale || ''}`,
+            label: `🔄 ${altName}`,
+            title: `<b>💡 ALTERNATIVE PRODUCT</b><br><br><b>Name:</b> ${altName}<br><b>Trust Score:</b> ${altScore}<br><br><b>Why Consider This?</b><br>${alt.rationale || 'Safer alternative with better security posture'}<br><br><i>Click to compare with current product</i>`,
             group: 'alternative',
-            size: 25,
+            size: 28,
             level: 4,  // Rightmost - alternatives
             color: {
-                border: '#6c3483',
-                background: '#9b59b6',
+                border: '#6A1B9A',
+                background: '#8E24AA',
                 highlight: {
-                    border: '#512e5f',
-                    background: '#af7ac5'
+                    border: '#4A148C',
+                    background: '#AB47BC'
                 }
             },
-            font: { size: 14, color: '#fff' },
+            font: { size: 15, color: '#fff', bold: true },
             mass: 2
         });
         
@@ -290,11 +340,11 @@ function buildGraphData(assessment) {
         edges.push({
             from: productId,
             to: altId,
-            label: 'alternative',
-            width: 2,
-            color: { color: '#9b59b6' },
+            label: 'ALTERNATIVE TO',
+            width: 3,
+            color: { color: '#8E24AA' },
             dashes: [10, 5],
-            arrows: { to: { scaleFactor: 0.5 } }
+            arrows: { to: { scaleFactor: 0.7 } }
         });
     });
     
@@ -305,20 +355,20 @@ function buildGraphData(assessment) {
         
         nodes.push({
             id: sourceId,
-            label: sourceName,
-            title: `<b>Data Source:</b> ${sourceName}<br>Type: ${source.type || 'N/A'}<br>Records: ${source.count || 'N/A'}`,
+            label: `📊 ${sourceName}`,
+            title: `<b>📊 DATA SOURCE</b><br><br><b>Source:</b> ${sourceName}<br><b>Type:</b> ${source.type || 'N/A'}<br><b>Records Found:</b> ${source.count || 'N/A'}<br><br><i>This source provided data used in the security assessment</i>`,
             group: 'source',
-            size: 15,
+            size: 18,
             level: 1,  // Between vendor and product
             color: {
-                border: '#117a65',
-                background: '#1abc9c',
+                border: '#00695C',
+                background: '#00897B',
                 highlight: {
-                    border: '#0e6655',
-                    background: '#48c9b0'
+                    border: '#004D40',
+                    background: '#26A69A'
                 }
             },
-            font: { size: 11, color: '#fff' },
+            font: { size: 12, color: '#fff', bold: true },
             mass: 1,
             shape: 'square'  // Different shape for data sources
         });
@@ -327,11 +377,11 @@ function buildGraphData(assessment) {
         edges.push({
             from: sourceId,
             to: productId,
-            label: 'informs',
-            width: 1,
-            color: { color: '#1abc9c' },
-            dashes: [2, 8],
-            arrows: { to: { scaleFactor: 0.4 } }
+            label: 'INFORMS',
+            width: 2,
+            color: { color: '#00897B' },
+            dashes: [5, 10],
+            arrows: { to: { scaleFactor: 0.6 } }
         });
     });
     
@@ -344,6 +394,8 @@ function buildGraphData(assessment) {
  * @param {Object} assessment - Assessment data
  */
 function setupGraphInteractions(network, assessment) {
+    const tooltip = document.getElementById('graph-custom-tooltip');
+    
     // Click on node
     network.on('click', function(params) {
         if (params.nodes.length > 0) {
@@ -352,10 +404,26 @@ function setupGraphInteractions(network, assessment) {
         }
     });
     
-    // Hover effect - highlight connected nodes
+    // Show custom HTML tooltip on hover
     network.on('hoverNode', function(params) {
         const nodeId = params.node;
+        const node = network.body.data.nodes.get(nodeId);
         const connectedNodes = network.getConnectedNodes(nodeId);
+        
+        // Show custom tooltip with HTML content
+        if (tooltip && node.title) {
+            tooltip.innerHTML = node.title;
+            tooltip.style.display = 'block';
+            
+            // Position tooltip near cursor
+            const canvasPos = network.getPositions([nodeId])[nodeId];
+            const DOMPos = network.canvasToDOM(canvasPos);
+            const container = document.getElementById('securityGraph');
+            const containerRect = container.getBoundingClientRect();
+            
+            tooltip.style.left = (containerRect.left + DOMPos.x + 20) + 'px';
+            tooltip.style.top = (containerRect.top + DOMPos.y - 20) + 'px';
+        }
         
         // Dim all nodes except connected ones
         const allNodes = network.body.data.nodes.get();
@@ -376,8 +444,13 @@ function setupGraphInteractions(network, assessment) {
         });
     });
     
-    // Reset on blur
+    // Reset on blur and hide tooltip
     network.on('blurNode', function(params) {
+        // Hide tooltip
+        if (tooltip) {
+            tooltip.style.display = 'none';
+        }
+        
         const allNodes = network.body.data.nodes.get();
         allNodes.forEach(node => {
             network.body.data.nodes.update({
@@ -385,6 +458,26 @@ function setupGraphInteractions(network, assessment) {
                 opacity: 1.0
             });
         });
+    });
+    
+    // Hide tooltip when mouse leaves the graph
+    network.on('blurNode', function() {
+        if (tooltip) {
+            tooltip.style.display = 'none';
+        }
+    });
+    
+    // Also hide tooltip on drag or zoom
+    network.on('dragStart', function() {
+        if (tooltip) {
+            tooltip.style.display = 'none';
+        }
+    });
+    
+    network.on('zoom', function() {
+        if (tooltip) {
+            tooltip.style.display = 'none';
+        }
     });
 }
 

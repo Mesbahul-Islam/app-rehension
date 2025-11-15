@@ -67,7 +67,6 @@ class DataCache(Base):
 
 logger = logging.getLogger(__name__)
 
-
 class AssessmentCache:
     """SQLAlchemy ORM-based cache for assessment results"""
     
@@ -101,9 +100,75 @@ class AssessmentCache:
         
         logger.info(f"Database initialized with SQLAlchemy ORM: {self.db_path}")
     
-    def _get_session(self) -> Session:
-        """Get a new database session"""
-        return self.SessionLocal()
+    def _migrate_schema_if_needed(self):
+        """Migrate old schema to support vendor-only assessments"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Check if old schema exists (product_name with NOT NULL constraint)
+                cursor.execute("PRAGMA table_info(assessments)")
+                columns = cursor.fetchall()
+                
+                # Look for product_name column
+                product_name_col = None
+                for col in columns:
+                    if col[1] == 'product_name':
+                        product_name_col = col
+                        break
+                
+                # If product_name exists and has NOT NULL constraint (col[3] == 1)
+                if product_name_col and product_name_col[3] == 1:
+
+                    # SQLite doesn't support ALTER TABLE to modify constraints
+                    # We need to recreate the table
+                    
+                    # 1. Rename old table
+                    cursor.execute("ALTER TABLE assessments RENAME TO assessments_old")
+                    
+                    # 2. Create new table with updated schema
+                    cursor.execute("""
+                        CREATE TABLE assessments (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            product_name TEXT,
+                            vendor TEXT,
+                            url TEXT,
+                            assessment_data TEXT NOT NULL,
+                            trust_score INTEGER,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            CONSTRAINT check_product_or_vendor CHECK (product_name IS NOT NULL OR vendor IS NOT NULL)
+                        )
+                    """)
+                    
+                    # 3. Copy data from old table
+                    cursor.execute("""
+                        INSERT INTO assessments (id, product_name, vendor, url, assessment_data, 
+                                                trust_score, created_at, updated_at)
+                        SELECT id, product_name, vendor, url, assessment_data, 
+                               trust_score, created_at, updated_at
+                        FROM assessments_old
+                    """)
+                    
+                    # 4. Drop old table
+                    cursor.execute("DROP TABLE assessments_old")
+                    
+                    # 5. Recreate indexes
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_product_name 
+                        ON assessments(product_name)
+                    """)
+                    
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_vendor 
+                        ON assessments(vendor)
+                    """)
+                    
+                    conn.commit()
+
+        except Exception as e:
+            logger.error(f"Error during schema migration: {e}")
+            # Don't fail initialization if migration fails
     
     def save_assessment(self, product_name: Optional[str], assessment_data: Dict[str, Any], 
                        vendor: Optional[str] = None, url: Optional[str] = None) -> int:
@@ -274,9 +339,14 @@ class AssessmentCache:
                 DataCache.expires_at < datetime.now()
             ).delete()
             
-            session.commit()
+            cursor.execute("""
+                DELETE FROM data_cache
+                WHERE expires_at < CURRENT_TIMESTAMP
+            """)
             
-            logger.info(f"Cleaned up {deleted} expired cache entries")
+            deleted = cursor.rowcount
+            conn.commit()
+
             return deleted
             
         except Exception as e:

@@ -10,7 +10,6 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-
 class InputParser:
     """Parse and normalize various input formats."""
     
@@ -58,16 +57,15 @@ class InputParser:
             
             # If VirusTotal API is available, perform lookup
             if self.virustotal_api:
-                logger.info(f"Looking up SHA1 hash in VirusTotal: {input_text[:8]}...")
+
                 vt_data = self.virustotal_api.lookup_hash(input_text)
                 
                 if vt_data:
                     result['virustotal_data'] = vt_data
                     result['product_name'] = vt_data.get('product')
                     result['vendor'] = vt_data.get('vendor')
-                    logger.info(f"VirusTotal lookup successful: {vt_data.get('primary_name', 'Unknown')}")
                 else:
-                    logger.warning(f"No VirusTotal data found for hash: {input_text}")
+                    pass
             
             return result
         
@@ -153,7 +151,6 @@ class InputParser:
             'sha1': parsed_input.get('sha1'),
             'virustotal_data': parsed_input.get('virustotal_data')
         }
-
 
 # Example usage and tests
 if __name__ == "__main__":

@@ -1489,45 +1489,47 @@ function renderSecurityEcosystemGraphCard() {
             
             <!-- Legend -->
             <div id="graphLegend" style="margin-top: 1.5rem; padding: 1.5rem; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 8px; border: 1px solid #dee2e6;">
-                <div style="font-weight: 600; margin-bottom: 1rem; font-size: 1rem; color: #333;">
-                    📊 Graph Legend
+                <div style="font-weight: 700; margin-bottom: 1.2rem; font-size: 1.1rem; color: #2c3e50;">
+                    📊 Graph Legend & Guide
                 </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.8rem; font-size: 0.9rem;">
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 20px; height: 20px; background: #3498db; border: 2px solid #2980b9; border-radius: 50%;"></span>
-                        <span><strong>Product</strong> (Center)</span>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; font-size: 0.95rem;">
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 24px; height: 24px; background: #1E88E5; border: 3px solid #1565C0; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>🎯 Product</strong> - Main item being assessed</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 20px; height: 20px; background: #27ae60; border: 2px solid #1e8449; border-radius: 50%;"></span>
-                        <span><strong>Vendor</strong></span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 24px; height: 24px; background: #43A047; border: 3px solid #2E7D32; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>🏢 Vendor</strong> - Company/developer</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 16px; height: 16px; background: #c0392b; border: 2px solid #7d0e0e; border-radius: 50%;"></span>
-                        <span><strong>Critical CVE</strong></span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 24px; height: 24px; background: #D32F2F; border: 3px solid #B71C1C; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>🔴 Critical CVE</strong> - Severe vulnerability</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 16px; height: 16px; background: #e74c3c; border: 2px solid #a93226; border-radius: 50%;"></span>
-                        <span><strong>High CVE</strong></span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 24px; height: 24px; background: #FF6F00; border: 3px solid #E65100; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>🟠 High CVE</strong> - Significant risk</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 16px; height: 16px; background: #f39c12; border: 2px solid #b9770e; border-radius: 50%;"></span>
-                        <span><strong>Medium CVE</strong></span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 24px; height: 24px; background: #C2185B; border: 3px solid #880E4F; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>⚠️ KEV</strong> - Actively exploited</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 16px; height: 16px; background: #8b0000; border: 2px solid #641e16; border-radius: 50%;"></span>
-                        <span><strong>⚠️ KEV</strong> (Exploited)</span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 24px; height: 24px; background: #8E24AA; border: 3px solid #6A1B9A; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>💡 Alternative</strong> - Safer option</span>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 20px; height: 20px; background: #9b59b6; border: 2px solid #6c3483; border-radius: 50%;"></span>
-                        <span><strong>Alternative</strong></span>
-                    </div>
-                    <div style="display: flex; align-items: center; gap: 0.5rem;">
-                        <span style="display: inline-block; width: 16px; height: 16px; background: #1abc9c; border: 2px solid #117a65;"></span>
-                        <span><strong>Data Source</strong></span>
+                    <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem; background: white; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                        <span style="display: inline-block; width: 20px; height: 20px; background: #00897B; border: 3px solid #00695C; border-radius: 3px; box-shadow: 0 2px 4px rgba(0,0,0,0.2);"></span>
+                        <span><strong>📊 Data Source</strong> - Information provider</span>
                     </div>
                 </div>
-                <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #dee2e6; font-size: 0.85rem; color: #666;">
-                    <strong>💡 Tips:</strong> Click CVE nodes to open NVD details • Hover to highlight connections • Drag nodes to rearrange • Scroll to zoom
+                <div style="margin-top: 1.2rem; padding: 1rem; background: #e3f2fd; border-left: 4px solid #1E88E5; border-radius: 4px; font-size: 0.9rem; line-height: 1.6;">
+                    <strong>💡 How to use:</strong><br>
+                    • <strong>Hover</strong> over nodes to highlight connections<br>
+                    • <strong>Click</strong> CVE nodes to open NVD database in new tab<br>
+                    • <strong>Drag</strong> to pan, <strong>scroll</strong> to zoom<br>
+                    • <strong>Solid lines</strong> show direct relationships<br>
+                    • <strong>Dashed lines</strong> indicate alternatives or data sources<br>
+                    • <strong>Line thickness</strong> represents relationship strength or severity
                 </div>
             </div>
         </div>

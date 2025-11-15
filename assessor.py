@@ -15,7 +15,6 @@ from virustotal_trust_scorer import VirusTotalTrustScorer
 
 logger = logging.getLogger(__name__)
 
-
 class SecurityAssessor:
     """Main assessment engine"""
     
@@ -38,16 +37,14 @@ class SecurityAssessor:
             # Always initialize single-agent for utility functions
             self.analyzer = GeminiAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
         else:
-            logger.info("Initializing SINGLE-AGENT analyzer")
+
             self.analyzer = GeminiAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
             self.multi_agent = None
         
         self.cache = AssessmentCache(config.DATABASE_PATH)
         self.trust_scorer = TrustScorer()
         self.virustotal_trust_scorer = VirusTotalTrustScorer()
-        
-        logger.info(f"SecurityAssessor initialized with {'MULTI-AGENT' if self.use_multi_agent else 'SINGLE-AGENT'} mode")
-    
+
     def assess_product(self, input_text: str, use_cache: bool = True, progress_callback: Optional[Callable] = None, 
                       virustotal_data: Optional[Dict] = None) -> Dict[str, Any]:
         """
@@ -62,10 +59,9 @@ class SecurityAssessor:
         Returns:
             Comprehensive security assessment
         """
-        logger.info(f"Starting assessment for: {input_text}")
-        
+
         if virustotal_data:
-            logger.info(f"VirusTotal data provided for assessment")
+
             logger.info(f"  File: {virustotal_data.get('primary_name', 'Unknown')}")
             logger.info(f"  Detection: {virustotal_data.get('detection_ratio', 'N/A')}")
         
@@ -81,7 +77,7 @@ class SecurityAssessor:
         evidence_registry = EvidenceRegistry()
         
         # Step 1: Gather initial data
-        logger.info("Step 1: Gathering product information")
+
         if progress_callback:
             progress_callback({
                 "stage": "data_gathering",
@@ -91,13 +87,13 @@ class SecurityAssessor:
         
         # If VirusTotal data is provided, use it instead of ProductHunt
         if virustotal_data:
-            logger.info("Using VirusTotal data instead of ProductHunt for product information")
+
             product_data = self._format_virustotal_as_product_data(virustotal_data)
         else:
             product_data = self._gather_product_data(input_text)
         
         # Step 2: Resolve entity (need single-agent for this)
-        logger.info("Step 2: Resolving entity identity")
+
         if progress_callback:
             progress_callback({
                 "stage": "entity_resolution",
@@ -107,7 +103,7 @@ class SecurityAssessor:
         
         # If VirusTotal data is available, use it directly for entity info
         if virustotal_data:
-            logger.info("Using VirusTotal data for entity resolution")
+
             entity_info = {
                 'product_name': virustotal_data.get('product') or virustotal_data.get('primary_name'),
                 'vendor': virustotal_data.get('vendor'),
@@ -122,9 +118,7 @@ class SecurityAssessor:
         
         product_name = entity_info.get('product_name')
         vendor = entity_info.get('vendor')
-        
-        logger.info(f"Resolved - Product: {product_name}, Vendor: {vendor}")
-        
+
         # Check cache again with resolved product/vendor
         if use_cache and (product_name or vendor):
             cached = self.cache.get_assessment(
@@ -133,7 +127,7 @@ class SecurityAssessor:
                 max_age_hours=self.config.CACHE_EXPIRY_HOURS
             )
             if cached:
-                logger.info(f"Returning cached assessment for: {product_name or vendor}")
+
                 if progress_callback:
                     progress_callback({
                         "stage": "cache",
@@ -143,7 +137,7 @@ class SecurityAssessor:
                 return cached
         
         # Step 3: Classify software
-        logger.info("Step 3: Classifying software")
+
         classification = self.analyzer.classify_software(entity_info, product_data)
         
         # Step 4: Gather security data
@@ -194,11 +188,9 @@ class SecurityAssessor:
         """
         Multi-agent assessment workflow with research → verification → synthesis
         """
-        logger.info("Using MULTI-AGENT analysis pipeline")
-        
+
         # Use single-agent for structured components (needed for trust scoring)
-        logger.info("Gathering structured analysis components...")
-        
+
         security_practices = self.analyzer.analyze_security_practices(
             entity_info, evidence_registry
         )
@@ -211,7 +203,7 @@ class SecurityAssessor:
         is_vendor_only = not entity_info.get('product_name')
         
         if is_vendor_only:
-            logger.info("Vendor-only assessment: Skipping data compliance and deployment controls")
+
             data_compliance = {
                 'not_applicable': True,
                 'reason': 'Data compliance assessment requires a specific product',
@@ -235,8 +227,7 @@ class SecurityAssessor:
         is_virustotal_analysis = virustotal_data is not None
         
         # Run multi-agent verification analysis
-        logger.info(f"Running multi-agent verification - Mode: {'VirusTotal' if is_virustotal_analysis else 'Product/Vendor'}")
-        
+
         multi_agent_result = self.multi_agent.analyze_with_verification(
             entity_info=entity_info,
             cve_data=security_data['cves'],
@@ -255,7 +246,6 @@ class SecurityAssessor:
         
         # Fallback to single-agent if multi-agent failed
         if not vuln_analysis or 'error' in multi_agent_result:
-            logger.warning("Multi-agent analysis incomplete, using single-agent for vulnerabilities")
             vuln_analysis = self.analyzer.analyze_vulnerabilities(
                 security_data['cves'],
                 security_data['kevs'],
@@ -264,11 +254,10 @@ class SecurityAssessor:
         
         # Calculate rule-based trust score (use VirusTotal scorer if applicable)
         if virustotal_data:
-            logger.info("Calculating VirusTotal-specific trust score")
+
             trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
         else:
-            logger.info("Calculating standard product/vendor trust score")
-            
+
             # Fetch EPSS scores for all CVEs
             cve_ids = [cve.get('cve_id') for cve in security_data['cves'] if cve.get('cve_id')]
             print(f"\n=== EPSS FETCHING IN ASSESSOR ===")
@@ -289,7 +278,7 @@ class SecurityAssessor:
             trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
         
         # Suggest alternatives
-        logger.info("Suggesting alternatives")
+
         alternatives, alt_evidence_refs = self.analyzer.suggest_alternatives(
             entity_info, classification, trust_score, evidence_registry
         )
@@ -321,7 +310,7 @@ class SecurityAssessor:
         logger.info(f"Alternatives sorted by trust score: {alt_scores}")
         
         # Compile final assessment with multi-agent metadata
-        logger.info("Compiling final multi-agent verified assessment")
+
         assessment = self._compile_assessment(
             entity_info=entity_info,
             classification=classification,
@@ -361,16 +350,14 @@ class SecurityAssessor:
         # Cache the result
         product_name = entity_info.get('product_name')
         vendor = entity_info.get('vendor')
-        
-        logger.info("Saving multi-agent assessment to cache")
+
         self.cache.save_assessment(
             product_name=product_name,
             assessment_data=assessment,
             vendor=vendor,
             url=entity_info.get('url')
         )
-        
-        logger.info(f"Multi-agent assessment complete for: {input_text}")
+
         return assessment
     
     def _assess_with_single_agent(
@@ -386,10 +373,9 @@ class SecurityAssessor:
         """
         Traditional single-agent assessment workflow
         """
-        logger.info("Using SINGLE-AGENT analysis")
-        
+
         # Step 5: Analyze vulnerabilities
-        logger.info("Step 5: Analyzing vulnerabilities")
+
         vuln_analysis = self.analyzer.analyze_vulnerabilities(
             security_data['cves'],
             security_data['kevs'],
@@ -397,8 +383,7 @@ class SecurityAssessor:
         )
         
         # Step 6: Gather additional security analysis
-        logger.info("Step 6: Analyzing security practices, incidents, compliance, and controls")
-        
+
         security_practices = self.analyzer.analyze_security_practices(
             entity_info, evidence_registry
         )
@@ -411,7 +396,7 @@ class SecurityAssessor:
         is_vendor_only = not entity_info.get('product_name')
         
         if is_vendor_only:
-            logger.info("Vendor-only assessment: Skipping data compliance and deployment controls")
+
             data_compliance = {
                 'not_applicable': True,
                 'reason': 'Data compliance assessment requires a specific product',
@@ -432,14 +417,12 @@ class SecurityAssessor:
             )
         
         # Step 7: Calculate rule-based trust score (use VirusTotal scorer if applicable)
-        logger.info("Step 7: Calculating transparent rule-based trust score")
-        
+
         if virustotal_data:
-            logger.info("Using VirusTotal-specific trust scorer")
+
             trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
         else:
-            logger.info("Using standard product/vendor trust scorer")
-            
+
             # Fetch EPSS scores for all CVEs
             cve_ids = [cve.get('cve_id') for cve in security_data['cves'] if cve.get('cve_id')]
             print(f"\n=== EPSS FETCHING IN ASSESSOR (single-agent) ===")
@@ -460,7 +443,7 @@ class SecurityAssessor:
             trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
         
         # Step 8: Suggest alternatives
-        logger.info("Step 8: Suggesting alternatives")
+
         alternatives, alt_evidence_refs = self.analyzer.suggest_alternatives(
             entity_info, classification, trust_score, evidence_registry
         )
@@ -492,7 +475,7 @@ class SecurityAssessor:
         logger.info(f"Alternatives sorted by trust score: {alt_scores}")
         
         # Step 9: Compile final assessment
-        logger.info("Step 9: Compiling final assessment with evidence citations")
+
         assessment = self._compile_assessment(
             entity_info=entity_info,
             classification=classification,
@@ -515,16 +498,14 @@ class SecurityAssessor:
         # Cache the result
         product_name = entity_info.get('product_name')
         vendor = entity_info.get('vendor')
-        
-        logger.info("Saving assessment to cache")
+
         self.cache.save_assessment(
             product_name=product_name,
             assessment_data=assessment,
             vendor=vendor,
             url=entity_info.get('url')
         )
-        
-        logger.info(f"Single-agent assessment complete for: {input_text}")
+
         return assessment
     
     def _gather_product_data(self, input_text: str) -> Optional[Dict[str, Any]]:
@@ -610,10 +591,10 @@ class SecurityAssessor:
             # Gather CVE data from NVD
             # Priority: 1) Search by product if available, 2) Fall back to vendor
             if product:
-                logger.info(f"Fetching CVEs for product: {product}")
+
                 cache_key = f"nvd_cve_{product}"
             else:
-                logger.info(f"Fetching CVEs for vendor: {vendor}")
+
                 cache_key = f"nvd_cve_vendor_{vendor}"
             
             cached_cves = self.cache.get_raw_data(cache_key)
@@ -633,7 +614,7 @@ class SecurityAssessor:
         
         try:
             # Gather KEV data from CISA
-            logger.info(f"Fetching KEVs for vendor: {vendor}, product: {product or 'all'}")
+
             cache_key = f"kev_{vendor}_{product or 'all'}"
             cached_kevs = self.cache.get_raw_data(cache_key)
             
@@ -669,12 +650,10 @@ class SecurityAssessor:
                 if year and year.isdigit():
                     timeline[year] = timeline.get(year, 0) + 1
             except Exception as e:
-                logger.warning(f"Error parsing CVE date for {cve.get('cve_id', 'unknown')}: {e}")
                 continue
         
         sorted_timeline = dict(sorted(timeline.items()))
-        logger.info(f"CVE timeline data: {sorted_timeline}")
-        
+
         return sorted_timeline  # Sort by year
     
     def _compile_assessment(self, entity_info: Dict, classification: Dict,

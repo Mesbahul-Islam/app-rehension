@@ -16,7 +16,6 @@ import google.genai.types as types
 
 logger = logging.getLogger(__name__)
 
-
 class ProgressCallback:
     """Callback for tracking multi-agent progress"""
     
@@ -38,9 +37,6 @@ class ProgressCallback:
                 "details": details,
                 "progress": self.stage_progress
             })
-        
-        logger.info(f"[{stage}] {status}: {details}")
-
 
 class MultiAgentAnalyzer:
     """
@@ -52,6 +48,10 @@ class MultiAgentAnalyzer:
     
     def __init__(self, api_key: str, model: str = "gemini-2.0-flash-exp"):
         """Initialize multi-agent system with LangChain v1.0"""
+        
+        logger.info("=" * 60)
+        logger.info("INITIALIZING MULTI-AGENT SYSTEM")
+        logger.info("=" * 60)
         
         self.api_key = api_key
         self.model_name = model
@@ -65,18 +65,27 @@ class MultiAgentAnalyzer:
         )
         
         # Initialize research agent
+        logger.info("Creating Research Agent...")
         self.research_agent = self._create_research_agent()
+        logger.info("✓ Research Agent created")
         
         # Initialize verification agent
+        logger.info("Creating Verification Agent...")
         self.verification_agent = self._create_verification_agent()
+        logger.info("✓ Verification Agent created")
         
         # Initialize synthesis agent
+        logger.info("Creating Synthesis Agent...")
         self.synthesis_agent = self._create_synthesis_agent()
+        logger.info("✓ Synthesis Agent created")
         
-        logger.info("Multi-agent analyzer initialized with 3 specialized agents")
-    
+        logger.info("=" * 60)
+        logger.info("MULTI-AGENT SYSTEM READY")
+        logger.info("=" * 60)
+
     def _create_model(self) -> ChatGoogleGenerativeAI:
         """Create a Gemini model instance"""
+        logger.info(f"Creating Gemini model: {self.model_name}")
         return ChatGoogleGenerativeAI(
             model=self.model_name,
             google_api_key=self.api_key,
@@ -91,14 +100,138 @@ class MultiAgentAnalyzer:
         """
         
         @tool
-        def analyze_vulnerability_data(cve_data: str, kev_data: str) -> str:
-            """Analyze CVE and KEV data to identify patterns and risks. MUST cite specific CVE IDs."""
-            return f"Analyzed vulnerability data with {len(cve_data)} CVEs"
+        def analyze_vulnerability_data(cve_data_json: str, kev_data_json: str) -> str:
+            """
+            Analyze CVE and KEV data to identify patterns and risks. MUST cite specific CVE IDs.
+            
+            Args:
+                cve_data_json: JSON string containing CVE data
+                kev_data_json: JSON string containing KEV data
+                
+            Returns:
+                JSON string with vulnerability analysis including trends, severity breakdown, and citations
+            """
+            try:
+                cves = json.loads(cve_data_json) if isinstance(cve_data_json, str) else cve_data_json
+                kevs = json.loads(kev_data_json) if isinstance(kev_data_json, str) else kev_data_json
+                
+                # Severity breakdown
+                severity_counts = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "UNKNOWN": 0}
+                for cve in cves:
+                    severity = cve.get('severity', 'UNKNOWN')
+                    severity_counts[severity] = severity_counts.get(severity, 0) + 1
+                
+                # Year-over-year trend
+                cve_by_year = {}
+                for cve in cves:
+                    pub_date = cve.get('published_date', '')
+                    if pub_date:
+                        year = pub_date[:4]
+                        cve_by_year[year] = cve_by_year.get(year, 0) + 1
+                
+                # Critical CVE details
+                critical_cves = [
+                    {
+                        "cve_id": cve.get('cve_id'),
+                        "cvss": cve.get('cvss_v3'),
+                        "summary": cve.get('summary', '')[:200],
+                        "url": f"https://nvd.nist.gov/vuln/detail/{cve.get('cve_id')}"
+                    }
+                    for cve in cves if cve.get('severity') in ['CRITICAL', 'HIGH']
+                ][:10]
+                
+                # KEV analysis
+                kev_details = [
+                    {
+                        "cve_id": kev.get('cve_id'),
+                        "vulnerability_name": kev.get('vulnerability_name'),
+                        "date_added": kev.get('date_added'),
+                        "ransomware": kev.get('known_ransomware', 'Unknown'),
+                        "url": f"https://www.cisa.gov/known-exploited-vulnerabilities-catalog?search_api_fulltext={kev.get('cve_id')}"
+                    }
+                    for kev in kevs
+                ]
+                
+                analysis = {
+                    "total_cves": len(cves),
+                    "total_kevs": len(kevs),
+                    "severity_breakdown": severity_counts,
+                    "trend_by_year": dict(sorted(cve_by_year.items())),
+                    "critical_vulnerabilities": critical_cves,
+                    "known_exploited_vulnerabilities": kev_details,
+                    "risk_assessment": {
+                        "has_critical": severity_counts.get('CRITICAL', 0) > 0,
+                        "has_kevs": len(kevs) > 0,
+                        "exploitation_risk": "HIGH" if len(kevs) > 0 else "MEDIUM" if severity_counts.get('CRITICAL', 0) > 0 else "LOW"
+                    }
+                }
+                
+                return json.dumps(analysis, indent=2)
+                
+            except Exception as e:
+                logger.error(f"Error analyzing vulnerability data: {e}")
+                return json.dumps({"error": str(e), "cve_count": 0, "kev_count": 0})
         
         @tool
-        def assess_security_practices(entity_info: str) -> str:
-            """Assess vendor security practices and transparency. MUST include URLs to evidence."""
-            return f"Assessed security practices for entity"
+        def assess_security_practices(entity_info_json: str, security_practices_json: str) -> str:
+            """
+            Assess vendor security practices and transparency. MUST include URLs to evidence.
+            
+            Args:
+                entity_info_json: JSON string with entity information
+                security_practices_json: JSON string with security practices data
+                
+            Returns:
+                JSON string with security practices assessment and evidence URLs
+            """
+            try:
+                entity = json.loads(entity_info_json) if isinstance(entity_info_json, str) else entity_info_json
+                practices = json.loads(security_practices_json) if isinstance(security_practices_json, str) else security_practices_json
+                
+                vendor = entity.get('vendor', 'Unknown')
+                product = entity.get('product_name', 'Unknown')
+                
+                # Extract security indicators
+                assessment = {
+                    "vendor": vendor,
+                    "product": product,
+                    "security_indicators": {
+                        "bug_bounty": practices.get('bug_bounty', 'unknown'),
+                        "disclosure_policy": practices.get('disclosure_policy', 'unknown'),
+                        "security_team_visible": practices.get('security_team_visible', False),
+                        "patch_cadence": practices.get('patch_cadence', 'unknown'),
+                        "overall_rating": practices.get('rating', 'unknown')
+                    },
+                    "evidence_urls": [],
+                    "transparency_score": "medium"
+                }
+                
+                # Generate evidence URLs
+                if entity.get('url'):
+                    base_url = entity['url'].rstrip('/')
+                    assessment['evidence_urls'].extend([
+                        f"{base_url}/security",
+                        f"{base_url}/trust",
+                        f"{base_url}/responsible-disclosure",
+                        f"{base_url}/security-practices"
+                    ])
+                
+                # Assess transparency
+                indicators_found = sum(1 for v in assessment['security_indicators'].values() if v not in ['unknown', False, None])
+                if indicators_found >= 4:
+                    assessment['transparency_score'] = "high"
+                elif indicators_found >= 2:
+                    assessment['transparency_score'] = "medium"
+                else:
+                    assessment['transparency_score'] = "low"
+                
+                assessment['summary'] = practices.get('summary', 'Security practices information available')
+                
+                return json.dumps(assessment, indent=2)
+                
+            except Exception as e:
+                logger.error(f"Error assessing security practices: {e}")
+                return json.dumps({"error": str(e), "transparency_score": "unknown"})
         
         agent = create_agent(
             model=self._create_model(),
@@ -160,33 +293,173 @@ You are the FIRST stage - generate comprehensive initial analysis WITH ALL CITAT
         
         @tool
         def verify_url(url: str) -> str:
-            """Verify that a URL is accessible and returns valid content."""
+            """
+            Verify that a URL is accessible and returns valid content.
+            
+            Args:
+                url: The URL to verify
+                
+            Returns:
+                JSON string with verification status, status code, and any redirects
+            """
             try:
-                response = requests.head(url, timeout=5, allow_redirects=True)
+                headers = {'User-Agent': 'Mozilla/5.0 (Security Assessment Bot)'}
+                response = requests.head(url, timeout=5, allow_redirects=True, headers=headers)
+                
+                result = {
+                    "url": url,
+                    "status": "accessible" if response.status_code == 200 else "error",
+                    "status_code": response.status_code,
+                    "redirected": response.url != url,
+                    "final_url": response.url if response.url != url else None,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
                 if response.status_code == 200:
-                    return f"✓ URL accessible: {url} (status {response.status_code})"
+                    result["message"] = "✓ URL accessible"
+                elif response.status_code in [301, 302, 307, 308]:
+                    result["message"] = f"⚠ URL redirected to {response.url}"
+                elif response.status_code == 404:
+                    result["message"] = "✗ URL not found (404)"
                 else:
-                    return f"⚠ URL returned status {response.status_code}: {url}"
+                    result["message"] = f"⚠ URL returned status {response.status_code}"
+                
+                return json.dumps(result, indent=2)
+                
+            except requests.exceptions.Timeout:
+                return json.dumps({
+                    "url": url,
+                    "status": "timeout",
+                    "message": "✗ URL verification timed out",
+                    "timestamp": datetime.now().isoformat()
+                })
+            except requests.exceptions.ConnectionError:
+                return json.dumps({
+                    "url": url,
+                    "status": "connection_error",
+                    "message": "✗ Could not connect to URL",
+                    "timestamp": datetime.now().isoformat()
+                })
             except Exception as e:
-                return f"✗ URL verification failed: {url} - {str(e)}"
+                return json.dumps({
+                    "url": url,
+                    "status": "error",
+                    "message": f"✗ Verification failed: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
         
         @tool
-        def cross_check_claim(claim: str, evidence: str) -> str:
-            """Verify a claim against available evidence."""
-            return f"Cross-checked claim against evidence"
+        def cross_check_claim(claim: str, evidence_json: str) -> str:
+            """
+            Verify a claim against available evidence.
+            
+            Args:
+                claim: The claim to verify
+                evidence_json: JSON string containing supporting evidence
+                
+            Returns:
+                JSON string with verification result and confidence level
+            """
+            try:
+                evidence = json.loads(evidence_json) if isinstance(evidence_json, str) else evidence_json
+                
+                # Analyze claim against evidence
+                claim_lower = claim.lower()
+                verification = {
+                    "claim": claim,
+                    "evidence_found": False,
+                    "confidence": "low",
+                    "supporting_data": [],
+                    "contradictions": []
+                }
+                
+                # Check for numerical claims
+                import re
+                numbers_in_claim = re.findall(r'\b\d+\b', claim)
+                
+                # Check if evidence contains supporting data
+                evidence_str = json.dumps(evidence).lower()
+                
+                # Check for keywords match
+                keywords = ['cve', 'vulnerability', 'critical', 'high', 'medium', 'low', 'exploit', 'kev']
+                matching_keywords = [kw for kw in keywords if kw in claim_lower and kw in evidence_str]
+                
+                if matching_keywords:
+                    verification['evidence_found'] = True
+                    verification['supporting_data'].append(f"Keywords match: {', '.join(matching_keywords)}")
+                    verification['confidence'] = "medium"
+                
+                # Check for numerical match
+                if numbers_in_claim:
+                    for num in numbers_in_claim:
+                        if num in evidence_str:
+                            verification['confidence'] = "high"
+                            verification['supporting_data'].append(f"Numerical data confirmed: {num}")
+                
+                if not verification['evidence_found']:
+                    verification['confidence'] = "low"
+                    verification['supporting_data'].append("Limited evidence found in provided data")
+                
+                return json.dumps(verification, indent=2)
+                
+            except Exception as e:
+                return json.dumps({
+                    "claim": claim,
+                    "error": str(e),
+                    "confidence": "unknown"
+                })
         
         @tool
         def validate_cve_reference(cve_id: str) -> str:
-            """Validate that a CVE ID exists in NVD database."""
+            """
+            Validate that a CVE ID exists in NVD database.
+            
+            Args:
+                cve_id: The CVE ID to validate (e.g., CVE-2024-1234)
+                
+            Returns:
+                JSON string with validation result and NVD URL
+            """
             try:
+                # Validate CVE ID format
+                import re
+                if not re.match(r'^CVE-\d{4}-\d{4,}$', cve_id):
+                    return json.dumps({
+                        "cve_id": cve_id,
+                        "valid": False,
+                        "message": "✗ Invalid CVE ID format",
+                        "expected_format": "CVE-YYYY-NNNN"
+                    })
+                
                 url = f"https://nvd.nist.gov/vuln/detail/{cve_id}"
-                response = requests.head(url, timeout=5, allow_redirects=True)
+                headers = {'User-Agent': 'Mozilla/5.0 (Security Assessment Bot)'}
+                
+                response = requests.head(url, timeout=5, allow_redirects=True, headers=headers)
+                
+                result = {
+                    "cve_id": cve_id,
+                    "valid": response.status_code == 200,
+                    "nvd_url": url,
+                    "status_code": response.status_code,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
                 if response.status_code == 200:
-                    return f"✓ Valid CVE: {cve_id}"
+                    result["message"] = f"✓ Valid CVE: {cve_id}"
+                elif response.status_code == 404:
+                    result["message"] = f"⚠ CVE not found in NVD: {cve_id}"
                 else:
-                    return f"⚠ CVE not found: {cve_id}"
+                    result["message"] = f"⚠ NVD returned status {response.status_code}"
+                
+                return json.dumps(result, indent=2)
+                
             except Exception as e:
-                return f"✗ CVE validation failed: {cve_id} - {str(e)}"
+                return json.dumps({
+                    "cve_id": cve_id,
+                    "valid": False,
+                    "message": f"✗ CVE validation failed: {str(e)}",
+                    "timestamp": datetime.now().isoformat()
+                })
         
         agent = create_agent(
             model=self._create_model(),
@@ -271,9 +544,78 @@ You are the SECOND stage - ensure accuracy and prevent hallucinations."""
         """
         
         @tool
-        def prioritize_findings(findings: str) -> str:
-            """Prioritize findings by severity and confidence."""
-            return f"Prioritized findings"
+        def prioritize_findings(findings_json: str) -> str:
+            """
+            Prioritize findings by severity, confidence, and evidence quality.
+            
+            Args:
+                findings_json: JSON string containing findings to prioritize
+                
+            Returns:
+                JSON string with prioritized findings sorted by risk level
+            """
+            try:
+                findings = json.loads(findings_json) if isinstance(findings_json, str) else findings_json
+                
+                # Define priority weights
+                severity_weight = {
+                    'critical': 10,
+                    'high': 7,
+                    'medium': 4,
+                    'low': 2
+                }
+                
+                confidence_weight = {
+                    'high': 3,
+                    'medium': 2,
+                    'low': 1
+                }
+                
+                evidence_quality_weight = {
+                    'strong': 3,
+                    'moderate': 2,
+                    'weak': 1,
+                    'none': 0
+                }
+                
+                prioritized = []
+                
+                if isinstance(findings, list):
+                    for finding in findings:
+                        severity = finding.get('severity', 'low').lower()
+                        confidence = finding.get('confidence', 'low').lower()
+                        evidence_quality = finding.get('evidence_quality', 'none').lower()
+                        
+                        # Calculate priority score
+                        score = (
+                            severity_weight.get(severity, 2) +
+                            confidence_weight.get(confidence, 1) +
+                            evidence_quality_weight.get(evidence_quality, 0)
+                        )
+                        
+                        finding['priority_score'] = score
+                        finding['priority_level'] = 'critical' if score >= 13 else 'high' if score >= 10 else 'medium' if score >= 6 else 'low'
+                        prioritized.append(finding)
+                    
+                    # Sort by priority score (descending)
+                    prioritized.sort(key=lambda x: x['priority_score'], reverse=True)
+                
+                result = {
+                    "prioritized_findings": prioritized,
+                    "summary": {
+                        "total": len(prioritized),
+                        "critical_priority": len([f for f in prioritized if f.get('priority_level') == 'critical']),
+                        "high_priority": len([f for f in prioritized if f.get('priority_level') == 'high']),
+                        "medium_priority": len([f for f in prioritized if f.get('priority_level') == 'medium']),
+                        "low_priority": len([f for f in prioritized if f.get('priority_level') == 'low'])
+                    }
+                }
+                
+                return json.dumps(result, indent=2)
+                
+            except Exception as e:
+                logger.error(f"Error prioritizing findings: {e}")
+                return json.dumps({"error": str(e), "prioritized_findings": []})
         
         agent = create_agent(
             model=self._create_model(),
@@ -392,26 +734,42 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
             
             # Stage 1: Research Agent Analysis
             progress.update("research", "in_progress", "Research Agent analyzing security data...")
-            logger.info(f"Stage 1: Research Agent generating initial analysis - Mode: {'VirusTotal' if is_virustotal_analysis else 'Product/Vendor'}")
-            
+            logger.info("\n" + "=" * 60)
+            logger.info("STAGE 1: RESEARCH AGENT")
+            logger.info("=" * 60)
+
             # Use different prompts based on analysis type
             if is_virustotal_analysis:
                 research_prompt = self._get_virustotal_research_prompt(data_str, virustotal_data)
+                logger.info("Using VirusTotal-specific research prompt")
             else:
                 research_prompt = self._get_standard_research_prompt(data_str)
+                logger.info("Using standard product/vendor research prompt")
+            
+            logger.info(f"Research prompt length: {len(research_prompt)} chars")
+            logger.info("Invoking Research Agent...")
             
             research_result = self.research_agent.invoke({
                 "messages": [{"role": "user", "content": research_prompt}]
             })
             
             research_analysis = research_result["messages"][-1].content
-            progress.update("research", "completed", "Research analysis complete with citations")
-            logger.info("Stage 1 complete: Research analysis with citations generated")
+            logger.info(f"✓ Research Agent completed")
+            logger.info(f"Research output length: {len(research_analysis)} chars")
+            logger.info("\n" + "=" * 80)
+            logger.info("RESEARCH AGENT OUTPUT:")
+            logger.info("=" * 80)
+            logger.info(research_analysis)
+            logger.info("=" * 80 + "\n")
             
+            progress.update("research", "completed", "Research analysis complete with citations")
+
             # Stage 2: Verification Agent Review
             progress.update("verification", "in_progress", "Verification Agent validating URLs and cross-checking findings...")
-            logger.info("Stage 2: Verification Agent validating URLs and cross-checking findings...")
-            
+            logger.info("\n" + "=" * 60)
+            logger.info("STAGE 2: VERIFICATION AGENT")
+            logger.info("=" * 60)
+
             # Parse research findings to extract URLs
             research_findings = {}
             try:
@@ -422,8 +780,9 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
                 elif "```" in research_text:
                     research_text = research_text.split("```")[1].split("```")[0].strip()
                 research_findings = json.loads(research_text)
+                logger.info(f"✓ Successfully parsed research JSON with {len(research_findings.get('findings', []))} findings")
             except json.JSONDecodeError:
-                logger.warning("Research output not in JSON format")
+                logger.warning("⚠ Research output not in valid JSON format")
                 research_findings = {"findings": [], "uncited_assumptions": [research_analysis]}
             
             # Extract all URLs for verification
@@ -433,6 +792,8 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
                     for citation in finding.get("citations", []):
                         if "url" in citation:
                             all_urls.append(citation["url"])
+            
+            logger.info(f"Found {len(all_urls)} URLs to verify")
             
             verification_prompt = f"""Review this research analysis and verify all claims against the source data:
 
@@ -465,17 +826,30 @@ Output in JSON format:
   }}
 }}"""
             
+            logger.info(f"Verification prompt length: {len(verification_prompt)} chars")
+            logger.info("Invoking Verification Agent...")
+            
             verification_result = self.verification_agent.invoke({
                 "messages": [{"role": "user", "content": verification_prompt}]
             })
             
             verification_analysis = verification_result["messages"][-1].content
-            progress.update("verification", "completed", "URL validation and verification complete")
-            logger.info("Stage 2 complete: URL validation and verification analysis complete")
+            logger.info(f"✓ Verification Agent completed")
+            logger.info(f"Verification output length: {len(verification_analysis)} chars")
+            logger.info("\n" + "=" * 80)
+            logger.info("VERIFICATION AGENT OUTPUT:")
+            logger.info("=" * 80)
+            logger.info(verification_analysis)
+            logger.info("=" * 80 + "\n")
             
+            progress.update("verification", "completed", "URL validation and verification complete")
+
             # Stage 3: Synthesis Agent Final Report
             progress.update("synthesis", "in_progress", "Synthesis Agent compiling final verified report...")
-            logger.info("Stage 3: Synthesis Agent compiling final verified report...")
+            logger.info("\n" + "=" * 60)
+            logger.info("STAGE 3: SYNTHESIS AGENT")
+            logger.info("=" * 60)
+
             synthesis_prompt = f"""Compile final verified security assessment report with citation-based filtering:
 
 RESEARCH FINDINGS WITH CITATIONS:
@@ -503,14 +877,24 @@ Output final assessment in JSON format:
   "data_quality_notes": []
 }}"""
             
+            logger.info(f"Synthesis prompt length: {len(synthesis_prompt)} chars")
+            logger.info("Invoking Synthesis Agent...")
+            
             synthesis_result = self.synthesis_agent.invoke({
                 "messages": [{"role": "user", "content": synthesis_prompt}]
             })
             
             final_report = synthesis_result["messages"][-1].content
-            progress.update("synthesis", "completed", "Final report generated")
-            logger.info("Stage 3 complete: Final synthesis report generated")
+            logger.info(f"✓ Synthesis Agent completed")
+            logger.info(f"Final report length: {len(final_report)} chars")
+            logger.info("\n" + "=" * 80)
+            logger.info("SYNTHESIS AGENT OUTPUT:")
+            logger.info("=" * 80)
+            logger.info(final_report)
+            logger.info("=" * 80 + "\n")
             
+            progress.update("synthesis", "completed", "Final report generated")
+
             # Parse verification results to extract broken URLs
             verification_data = {}
             try:
@@ -521,7 +905,7 @@ Output final assessment in JSON format:
                     verification_text = verification_text.split("```")[1].split("```")[0].strip()
                 verification_data = json.loads(verification_text)
             except json.JSONDecodeError:
-                logger.warning("Verification output not in JSON format")
+                pass
             
             # Parse final report (expect JSON)
             try:
@@ -542,7 +926,6 @@ Output final assessment in JSON format:
                     final_assessment['_url_verification_details'] = verification_data['url_checks']
                 
             except json.JSONDecodeError:
-                logger.warning("Final report not in JSON format, wrapping as text")
                 final_assessment = {
                     "analysis": final_report,
                     "format": "text",
@@ -593,7 +976,14 @@ Output final assessment in JSON format:
             if all_citations:
                 final_assessment['citations'] = all_citations
             
-            logger.info(f"Multi-agent analysis complete with {len(all_citations)} citations")
+            logger.info("\n" + "=" * 60)
+            logger.info("MULTI-AGENT ANALYSIS COMPLETE")
+            logger.info("=" * 60)
+            logger.info(f"Total citations extracted: {len(all_citations)}")
+            logger.info(f"Verified findings: {len(final_assessment.get('verified_findings', []))}")
+            logger.info(f"Partially verified: {len(final_assessment.get('partially_verified_findings', []))}")
+            logger.info(f"Unverified claims: {len(final_assessment.get('unverified_claims', []))}")
+            logger.info("=" * 60)
             
             return final_assessment
             
