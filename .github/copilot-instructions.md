@@ -32,11 +32,12 @@ All LLM analyses MUST cite sources using `evidence.py`:
 
 **Example**: When adding CVE data, call `evidence_registry.add_independent_claim(source_name="NVD", claim_text=..., url=...)`
 
-### Database Caching Strategy
-`database.py` uses SQLite with 24-hour cache expiry:
-- **Key lookup**: By `product_name` OR `vendor` (not both required after migration)
-- **Schema migration**: Old schema required `product_name NOT NULL`, new schema supports vendor-only assessments
-- Check cache BEFORE and AFTER entity resolution (two-stage lookup)
+### Cache Strategy
+`database.py` now stores cached assessments in `data/cache.json` with ~24-hour expiry:
+- **Primary lookup**: Original user search term (avoids unnecessary API calls)
+- **Secondary lookup**: Normalized `product_name` OR `vendor` after entity resolution
+- **Raw data cache**: API payloads stored separately with their own TTL
+Ensure cache is checked before calling external APIs.
 
 ### Flask Progress Streaming
 Real-time progress uses Server-Sent Events (SSE):
@@ -67,11 +68,10 @@ curl -X POST http://localhost:5000/assess \
   -d '{"input_text": "Slack", "use_cache": true}'
 ```
 
-### Debugging Database
+### Debugging Cache
 ```bash
-sqlite3 data/assessments.db
-.tables                # List tables
-SELECT * FROM assessments LIMIT 5;
+cat data/cache.json        # Inspect cached assessments
+jq '.assessments | length' data/cache.json
 ```
 
 ## Project-Specific Conventions
@@ -135,7 +135,7 @@ Uses LangChain v1.0 with `ChatGoogleGenerativeAI`:
 2. **Session IDs**: Frontend generates `Date.now().toString()` for progress tracking - use same ID for both `/assess` and `/progress/<session_id>`
 3. **Environment Variables**: `.env` file is gitignored. Always copy from `.env.example` and add API keys
 4. **LLM Temperature**: Set to 0.1 for factual consistency (see `config.py` and `llm_analyzer.py`)
-5. **Database Migration**: Run `_migrate_schema_if_needed()` on startup to handle old schemas with NOT NULL constraints
+5. **Cache Path Permissions**: Ensure `data/cache.json` is writable; the cache auto-creates directories if missing
 
 ## File Purpose Quick Reference
 
@@ -147,7 +147,7 @@ Uses LangChain v1.0 with `ChatGoogleGenerativeAI`:
 | `multi_agent_analyzer.py` | LangChain multi-agent system |
 | `trust_scorer.py` | Rule-based 0-100 scoring algorithm |
 | `evidence.py` | Source citation and evidence tracking |
-| `database.py` | SQLite caching with 24h expiry |
+| `database.py` | JSON caching with 24h expiry |
 | `data_sources.py` | API clients for ProductHunt, NVD, CISA |
 | `input_parser.py` | Detect input format (product/URL/SHA1) |
 | `config.py` | Environment variables and constants |

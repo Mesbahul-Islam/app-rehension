@@ -10,7 +10,7 @@ Security teams and CISOs are constantly asked to approve new tools they've never
 - **RAG Architecture**: Retrieval-Augmented Generation for fact-based assessments
 - **Multiple Data Sources**: ProductHunt, OpenCVE, CISA KEV catalog
 - **Web UI**: Flask-based interface with comparison features
-- **Local Cache**: SQLite database for reproducibility and faster results
+- **Local Cache**: JSON file for reproducibility and faster results
 
 ## Features
 
@@ -21,7 +21,7 @@ Security teams and CISOs are constantly asked to approve new tools they've never
 ✅ **Risk Assessment**: Comprehensive security posture with evidence-based findings  
 ✅ **Alternative Suggestions**: Recommends 1-2 safer alternatives  
 ✅ **Comparison View**: Side-by-side comparison of multiple products  
-✅ **Cached Results**: Local SQLite database for reproducibility and timestamp tracking  
+✅ **Cached Results**: Local JSON cache for reproducibility and timestamp tracking  
 ✅ **Source Citations**: All findings linked to authoritative sources  
 
 ## Architecture
@@ -29,8 +29,8 @@ Security teams and CISOs are constantly asked to approve new tools they've never
 ```
 User Input → Entity Resolution (Gemini) → Data Gathering (APIs) → 
 Analysis (Gemini) → Trust Score Calculation → Assessment Report
-                      ↓
-              SQLite Cache (Reproducibility)
+          ↓
+        JSON Cache (Reproducibility)
 ```
 
 ### Components
@@ -41,7 +41,7 @@ Analysis (Gemini) → Trust Score Calculation → Assessment Report
   - ProductHunt API: Product information and metadata
   - OpenCVE API: CVE vulnerability data
   - CISA KEV: Known Exploited Vulnerabilities catalog
-- **SQLite Database**: Cached assessments and raw API data
+- **JSON Cache File**: Cached assessments and raw API data
 - **Assessment Engine**: Orchestrates workflow and compiles reports
 
 ## Installation
@@ -210,14 +210,14 @@ Each assessment includes:
 
 ## Caching and Reproducibility
 
-All assessments are cached in SQLite database with:
-- Full assessment data
+All assessments are cached in a lightweight JSON file with:
+- Full assessment data keyed by the original search term
 - Timestamp of creation and updates
-- Raw API responses with expiry
+- Raw API responses with expiry windows
 - Deterministic parameters for reproducibility
 
 ### Cache Location
-`data/assessments.db` (configurable in `.env`)
+`data/cache.json` (configurable in `.env`)
 
 ### Cache Behavior
 - Assessments cached for 24 hours (configurable)
@@ -236,7 +236,7 @@ PRODUCTHUNT_API_KEY=your_key
 
 # Cache settings
 CACHE_EXPIRY_HOURS=24
-DATABASE_PATH=data/assessments.db
+DATABASE_PATH=data/cache.json
 
 # LLM Settings
 GEMINI_MODEL=gemini-1.5-pro
@@ -251,7 +251,7 @@ hackathon_project/
 ├── assessor.py           # Core assessment engine
 ├── llm_analyzer.py       # Gemini LLM integration
 ├── data_sources.py       # API integrations (ProductHunt, OpenCVE, CISA)
-├── database.py           # SQLite caching layer
+├── database.py           # JSON caching layer
 ├── config.py             # Configuration management
 ├── requirements.txt      # Python dependencies
 ├── .env.example         # Environment variables template
@@ -263,8 +263,8 @@ hackathon_project/
 │   ├── history.html    # Assessment history
 │   ├── compare.html    # Product comparison
 │   └── error.html      # Error page
-└── data/               # Database directory (created automatically)
-    └── assessments.db  # SQLite database
+└── data/               # Cache directory (created automatically)
+  └── cache.json      # JSON cache file
 ```
 
 ## Hallucination Prevention

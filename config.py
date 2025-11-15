@@ -22,7 +22,7 @@ class Config:
     DEBUG = os.getenv('FLASK_DEBUG', 'True').lower() == 'true'
     
     # Database
-    DATABASE_PATH = os.getenv('DATABASE_PATH', 'data/assessments.db')
+    DATABASE_PATH = os.getenv('DATABASE_PATH', 'data/cache.json')
     
     # API Endpoints
     NVD_API_BASE = "https://services.nvd.nist.gov/rest/json/cves/2.0"

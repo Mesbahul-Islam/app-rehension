@@ -63,11 +63,41 @@ async function handleFormSubmit(e) {
         }
         
         if (data.success && data.session_id) {
-            // Show multi-agent progress if enabled
-            multiAgentProgress.style.display = 'block';
-            
-            // Connect to progress stream
-            connectProgressStream(sessionId, inputText, useCache);
+            // Check if result was cached
+            if (data.cached && data.assessment) {
+                // Display cached result immediately
+                progressMessage.textContent = '✓ Retrieved from cache (instant)';
+                
+                // Hide loading and show results section
+                loading.classList.remove('active');
+                submitBtn.disabled = false;
+                
+                const resultsDiv = document.getElementById('results');
+                const resultsContent = document.getElementById('resultsContent');
+                
+                resultsDiv.style.display = 'block';
+                
+                // Display the assessment first (this will set innerHTML)
+                displayAssessment(data.assessment);
+                
+                // Then prepend the cache banner at the top
+                const cacheBanner = document.createElement('div');
+                cacheBanner.style.cssText = 'background: #e3f2fd; border-left: 4px solid #2196f3; padding: 1rem; margin-bottom: 1.5rem; border-radius: 4px;';
+                cacheBanner.innerHTML = `
+                    <strong>⚡ Cached Result</strong><br>
+                    <small style="color: #666;">
+                        This assessment was retrieved from cache (generated within the last 24 hours). 
+                        <a href="javascript:location.reload()" style="color: #2196f3;">Refresh to generate new</a>
+                    </small>
+                `;
+                resultsContent.insertBefore(cacheBanner, resultsContent.firstChild);
+            } else {
+                // Show multi-agent progress if enabled
+                multiAgentProgress.style.display = 'block';
+                
+                // Connect to progress stream
+                connectProgressStream(sessionId, inputText, useCache);
+            }
         }
         
     } catch (error) {

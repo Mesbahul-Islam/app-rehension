@@ -76,14 +76,41 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/progress-tracker.js') }}"></script>
-<script src="{{ url_for('static', filename='js/assessment-display.js') }}"></script>
-<script src="{{ url_for('static', filename='js/form-handler.js') }}"></script>
-<script src="{{ url_for('static', filename='js/progress-tracker.js') }}"></script>
-<script src="{{ url_for('static', filename='js/security-graph.js') }}"></script>
-<script src="{{ url_for('static', filename='js/assessment-display.js') }}"></script>
-<script src="{{ url_for('static', filename='js/form-handler.js') }}"></script>
 <script src="{{ url_for('static', filename='js/progress-tracker.js') }}?v=10"></script>
+<script src="{{ url_for('static', filename='js/security-graph.js') }}"></script>
 <script src="{{ url_for('static', filename='js/assessment-display.js') }}?v=10"></script>
 <script src="{{ url_for('static', filename='js/form-handler.js') }}?v=10"></script>
+
+{% if show_cached and cached_assessment %}
+<script>
+    // Automatically display cached assessment when loaded from history
+    document.addEventListener('DOMContentLoaded', function() {
+        const cachedData = {{ cached_assessment | tojson | safe }};
+        
+        // Hide the form and show results
+        document.querySelector('.card').style.display = 'none';
+        
+        // Display the cached assessment
+        const resultsDiv = document.getElementById('results');
+        const resultsContent = document.getElementById('resultsContent');
+        
+        resultsDiv.style.display = 'block';
+        
+        // Add a banner showing this is from cache
+        const cacheBanner = document.createElement('div');
+        cacheBanner.style.cssText = 'background: #e3f2fd; border-left: 4px solid #2196f3; padding: 1rem; margin-bottom: 1.5rem; border-radius: 4px;';
+        cacheBanner.innerHTML = `
+            <strong>📋 Cached Assessment</strong><br>
+            <small style="color: #666;">
+                This assessment was retrieved from history. 
+                <a href="/" style="color: #2196f3;">Create new assessment</a>
+            </small>
+        `;
+        resultsContent.appendChild(cacheBanner);
+        
+        // Display the assessment using the standard display function
+        displayAssessment(cachedData);
+    });
+</script>
+{% endif %}
 {% endblock %}

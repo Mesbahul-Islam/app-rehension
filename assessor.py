@@ -46,7 +46,7 @@ class SecurityAssessor:
         self.virustotal_trust_scorer = VirusTotalTrustScorer()
 
     def assess_product(self, input_text: str, use_cache: bool = True, progress_callback: Optional[Callable] = None, 
-                      virustotal_data: Optional[Dict] = None) -> Dict[str, Any]:
+                      virustotal_data: Optional[Dict] = None, search_term: Optional[str] = None) -> Dict[str, Any]:
         """
         Main assessment workflow
         
@@ -55,10 +55,33 @@ class SecurityAssessor:
             use_cache: Whether to use cached results if available
             progress_callback: Optional callback for progress updates
             virustotal_data: Optional VirusTotal data from SHA1 hash lookup
+            search_term: Original user-provided search query (for cache key stability)
             
         Returns:
             Comprehensive security assessment
         """
+
+        normalized_search_term = search_term or input_text
+        
+        logger.info(f"[CACHE] assess_product called: input_text='{input_text}', search_term='{search_term}', use_cache={use_cache}")
+
+        if use_cache and normalized_search_term:
+            logger.info("[CACHE] Checking cache before API calls...")
+            cached_query_result = self.cache.get_assessment_by_query(
+                normalized_search_term,
+                max_age_hours=self.config.CACHE_EXPIRY_HOURS
+            )
+            if cached_query_result:
+                logger.info(f"[CACHE] ✓ HIT - Returning cached result for '{normalized_search_term}'")
+                if progress_callback:
+                    progress_callback({
+                        "stage": "cache",
+                        "status": "completed",
+                        "details": "Returning cached assessment for this search"
+                    })
+                return cached_query_result
+            else:
+                logger.info(f"[CACHE] ✗ MISS - Will perform full assessment for '{normalized_search_term}'")
 
         if virustotal_data:
 
@@ -161,7 +184,8 @@ class SecurityAssessor:
                 security_data=security_data,
                 evidence_registry=evidence_registry,
                 progress_callback=progress_callback,
-                virustotal_data=virustotal_data
+                virustotal_data=virustotal_data,
+                search_term=normalized_search_term
             )
         else:
             return self._assess_with_single_agent(
@@ -171,7 +195,8 @@ class SecurityAssessor:
                 product_data=product_data,
                 security_data=security_data,
                 evidence_registry=evidence_registry,
-                virustotal_data=virustotal_data
+                virustotal_data=virustotal_data,
+                search_term=normalized_search_term
             )
     
     def _assess_with_multi_agent(
@@ -183,7 +208,8 @@ class SecurityAssessor:
         security_data: Dict,
         evidence_registry: EvidenceRegistry,
         progress_callback: Optional[Callable] = None,
-        virustotal_data: Optional[Dict] = None
+        virustotal_data: Optional[Dict] = None,
+        search_term: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Multi-agent assessment workflow with research → verification → synthesis
@@ -350,12 +376,15 @@ class SecurityAssessor:
         # Cache the result
         product_name = entity_info.get('product_name')
         vendor = entity_info.get('vendor')
+        cache_query = search_term or input_text
 
+        logger.info(f"[CACHE] Saving assessment for query: '{cache_query}'")
         self.cache.save_assessment(
             product_name=product_name,
             assessment_data=assessment,
             vendor=vendor,
-            url=entity_info.get('url')
+            url=entity_info.get('url'),
+            search_term=cache_query
         )
 
         return assessment
@@ -368,7 +397,8 @@ class SecurityAssessor:
         product_data: Dict,
         security_data: Dict,
         evidence_registry: EvidenceRegistry,
-        virustotal_data: Optional[Dict] = None
+        virustotal_data: Optional[Dict] = None,
+        search_term: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Traditional single-agent assessment workflow
@@ -498,12 +528,15 @@ class SecurityAssessor:
         # Cache the result
         product_name = entity_info.get('product_name')
         vendor = entity_info.get('vendor')
+        cache_query = search_term or input_text
 
+        logger.info(f"[CACHE] Saving assessment for query: '{cache_query}'")
         self.cache.save_assessment(
             product_name=product_name,
             assessment_data=assessment,
             vendor=vendor,
-            url=entity_info.get('url')
+            url=entity_info.get('url'),
+            search_term=cache_query
         )
 
         return assessment
@@ -732,7 +765,8 @@ class SecurityAssessor:
                 'rationale': trust_score.get('rationale'),
                 'calculation_method': trust_score.get('calculation_method'),
                 'weights': trust_score.get('weights', {}),
-                'timestamp': trust_score.get('timestamp')
+                'timestamp': trust_score.get('timestamp'),
+                'insufficient_data': trust_score.get('insufficient_data', False)  # Flag for insufficient data
             },
             'security_practices': {
                 'rating': security_practices.get('rating'),
@@ -859,6 +893,10 @@ class SecurityAssessor:
     def get_assessment_history(self, limit: int = 100) -> list:
         """Get list of all cached assessments"""
         return self.cache.get_all_assessments(limit)
+    
+    def get_assessment_by_id(self, assessment_id: int) -> Optional[Dict[str, Any]]:
+        """Get a specific cached assessment by ID"""
+        return self.cache.get_assessment_by_id(assessment_id)
     
     def assess_alternative(self, product_name: str, vendor: str = None) -> Dict[str, Any]:
         """

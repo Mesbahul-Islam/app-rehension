@@ -15,6 +15,7 @@
                 <th style="padding: 1rem;">Vendor</th>
                 <th style="padding: 1rem;">Trust Score</th>
                 <th style="padding: 1rem;">Last Updated</th>
+                <th style="padding: 1rem;">Actions</th>
             </tr>
         </thead>
         <tbody>
@@ -35,10 +36,15 @@
                             <span class="badge low">{{ score }}/100</span>
                         {% endif %}
                     {% else %}
-                        N/A
+                        <span style="color: #ff9800;">Insufficient Data</span>
                     {% endif %}
                 </td>
                 <td style="padding: 1rem;">{{ assessment.updated_at }}</td>
+                <td style="padding: 1rem;">
+                    <a href="/assessment/{{ assessment.id }}" class="btn btn-secondary" style="text-decoration: none; padding: 0.5rem 1rem; border-radius: 6px; background: #0066cc; color: white; font-size: 0.9rem;">
+                        View Details
+                    </a>
+                </td>
             </tr>
             {% endfor %}
         </tbody>

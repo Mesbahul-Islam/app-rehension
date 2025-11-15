@@ -41,20 +41,21 @@ class TrustScorer:
         print(f"EPSS data keys: {list(epss_data.keys()) if epss_data else 'None'}")
         
         if not cves:
-            # No CVEs found = maximum trust
+            # No CVEs found - could mean no vulnerabilities OR insufficient data
             return {
-                "score": 100,
-                "risk_level": "VERY_LOW",
-                "confidence": "High",
-                "rationale": "No known vulnerabilities found",
+                "score": None,  # Indicate insufficient data
+                "risk_level": "UNKNOWN",
+                "confidence": "Low",
+                "rationale": "Insufficient data: No CVE records found. This could mean the product is very new, not widely analyzed, or not in public vulnerability databases.",
+                "insufficient_data": True,
                 "scoring_breakdown": {
-                    "cvss_risk": 0,
-                    "epss_risk": 0,
+                    "cvss_risk": None,
+                    "epss_risk": None,
                     "kev_risk": 0,
-                    "total_risk": 0
+                    "total_risk": None
                 },
-                "key_factors": ["No CVEs reported"],
-                "data_limitations": []
+                "key_factors": ["No vulnerability data available"],
+                "data_limitations": ["No CVE records found in NVD database", "Cannot calculate reliable trust score without vulnerability history"]
             }
         
         # Calculate aggregate risk metrics

@@ -1,357 +1,321 @@
-"""
-Database and caching layer for assessment storage using SQLAlchemy ORM
-"""
+"""Lightweight JSON-based caching for assessments and API responses."""
+
 import json
 import logging
-from typing import Optional, Dict, Any, List
-from datetime import datetime, timedelta
 import os
-
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Index, CheckConstraint
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.pool import StaticPool
-
-logger = logging.getLogger(__name__)
-
-# Create declarative base
-Base = declarative_base()
-
-
-class Assessment(Base):
-    """ORM model for assessment cache"""
-    __tablename__ = 'assessments'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    product_name = Column(String, nullable=True, index=True)
-    vendor = Column(String, nullable=True, index=True)
-    url = Column(String, nullable=True)
-    assessment_data = Column(Text, nullable=False)
-    trust_score = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.now, nullable=False)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, nullable=False)
-    
-    __table_args__ = (
-        CheckConstraint('product_name IS NOT NULL OR vendor IS NOT NULL', name='check_product_or_vendor'),
-        Index('idx_product_name', 'product_name'),
-        Index('idx_vendor', 'vendor'),
-    )
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert assessment to dictionary"""
-        return {
-            'id': self.id,
-            'product_name': self.product_name,
-            'vendor': self.vendor,
-            'trust_score': self.trust_score,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
-        }
-
-
-class DataCache(Base):
-    """ORM model for raw data cache"""
-    __tablename__ = 'data_cache'
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    cache_key = Column(String, unique=True, nullable=False, index=True)
-    data_type = Column(String, nullable=False)
-    data = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.now, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-    
-    __table_args__ = (
-        Index('idx_cache_key', 'cache_key'),
-    )
-
+import threading
+from copy import deepcopy
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+_EMPTY_CACHE: Dict[str, Any] = {
+    "assessments": [],
+    "raw_data": {}
+}
+
 
 class AssessmentCache:
-    """SQLAlchemy ORM-based cache for assessment results"""
-    
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        self._ensure_db_directory()
-        self._init_db()
-    
-    def _ensure_db_directory(self):
-        """Create database directory if it doesn't exist"""
-        db_dir = os.path.dirname(self.db_path)
-        if db_dir and not os.path.exists(db_dir):
-            os.makedirs(db_dir)
-    
-    def _init_db(self):
-        """Initialize database using SQLAlchemy ORM"""
-        # Create SQLite engine
-        db_url = f'sqlite:///{self.db_path}'
-        self.engine = create_engine(
-            db_url,
-            connect_args={'check_same_thread': False},
-            poolclass=StaticPool,
-            echo=False  # Set to True for SQL debugging
-        )
-        
-        # Create session factory
-        self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
-        
-        # Create all tables
-        Base.metadata.create_all(bind=self.engine)
-        
-        logger.info(f"Database initialized with SQLAlchemy ORM: {self.db_path}")
-    
-    def _migrate_schema_if_needed(self):
-        """Migrate old schema to support vendor-only assessments"""
-        try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                
-                # Check if old schema exists (product_name with NOT NULL constraint)
-                cursor.execute("PRAGMA table_info(assessments)")
-                columns = cursor.fetchall()
-                
-                # Look for product_name column
-                product_name_col = None
-                for col in columns:
-                    if col[1] == 'product_name':
-                        product_name_col = col
-                        break
-                
-                # If product_name exists and has NOT NULL constraint (col[3] == 1)
-                if product_name_col and product_name_col[3] == 1:
+    """Simple JSON file cache used across the app."""
 
-                    # SQLite doesn't support ALTER TABLE to modify constraints
-                    # We need to recreate the table
-                    
-                    # 1. Rename old table
-                    cursor.execute("ALTER TABLE assessments RENAME TO assessments_old")
-                    
-                    # 2. Create new table with updated schema
-                    cursor.execute("""
-                        CREATE TABLE assessments (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            product_name TEXT,
-                            vendor TEXT,
-                            url TEXT,
-                            assessment_data TEXT NOT NULL,
-                            trust_score INTEGER,
-                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                            CONSTRAINT check_product_or_vendor CHECK (product_name IS NOT NULL OR vendor IS NOT NULL)
-                        )
-                    """)
-                    
-                    # 3. Copy data from old table
-                    cursor.execute("""
-                        INSERT INTO assessments (id, product_name, vendor, url, assessment_data, 
-                                                trust_score, created_at, updated_at)
-                        SELECT id, product_name, vendor, url, assessment_data, 
-                               trust_score, created_at, updated_at
-                        FROM assessments_old
-                    """)
-                    
-                    # 4. Drop old table
-                    cursor.execute("DROP TABLE assessments_old")
-                    
-                    # 5. Recreate indexes
-                    cursor.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_product_name 
-                        ON assessments(product_name)
-                    """)
-                    
-                    cursor.execute("""
-                        CREATE INDEX IF NOT EXISTS idx_vendor 
-                        ON assessments(vendor)
-                    """)
-                    
-                    conn.commit()
+    def __init__(self, cache_path: str, default_expiry_hours: int = 24):
+        # Always use absolute path to avoid issues with working directory changes
+        self.cache_path = os.path.abspath(cache_path)
+        self.default_expiry_hours = default_expiry_hours
+        self._lock = threading.Lock()
+        logger.info(f"[CACHE] Initialized with path: {self.cache_path}")
+        self._ensure_cache_file()
 
-        except Exception as e:
-            logger.error(f"Error during schema migration: {e}")
-            # Don't fail initialization if migration fails
-    
-    def save_assessment(self, product_name: Optional[str], assessment_data: Dict[str, Any], 
-                       vendor: Optional[str] = None, url: Optional[str] = None) -> int:
-        """Save or update an assessment (product or vendor) using ORM"""
-        
-        # Ensure at least one identifier is provided
-        if not product_name and not vendor:
-            raise ValueError("Either product_name or vendor must be provided")
-        
-        session = self._get_session()
+    def _ensure_cache_file(self) -> None:
+        cache_dir = os.path.dirname(self.cache_path)
+        if cache_dir and not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+
+        if not os.path.exists(self.cache_path):
+            with open(self.cache_path, "w", encoding="utf-8") as cache_file:
+                json.dump(_EMPTY_CACHE, cache_file, indent=2)
+
+    def _load_cache(self) -> Dict[str, Any]:
         try:
-            # Check if assessment exists (by product_name or vendor)
-            if product_name:
-                existing = session.query(Assessment).filter(
-                    Assessment.product_name == product_name
-                ).first()
-            else:
-                existing = session.query(Assessment).filter(
-                    Assessment.vendor == vendor,
-                    Assessment.product_name.is_(None)
-                ).first()
-            
-            trust_score = assessment_data.get('trust_score', {}).get('total_score')
-            data_json = json.dumps(assessment_data, indent=2)
-            
-            if existing:
-                # Update existing
-                existing.assessment_data = data_json
-                existing.vendor = vendor
-                existing.url = url
-                existing.trust_score = trust_score
-                existing.updated_at = datetime.now()
-                assessment_id = existing.id
-            else:
-                # Insert new
-                new_assessment = Assessment(
-                    product_name=product_name,
-                    vendor=vendor,
-                    url=url,
-                    assessment_data=data_json,
-                    trust_score=trust_score
-                )
-                session.add(new_assessment)
-                session.flush()
-                assessment_id = new_assessment.id
-            
-            session.commit()
-            return assessment_id
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error saving assessment: {e}")
-            raise
-        finally:
-            session.close()
-    
-    def get_assessment(self, product_name: Optional[str] = None, vendor: Optional[str] = None, 
-                      max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
-        """Retrieve a cached assessment if it's fresh enough (by product or vendor) using ORM"""
+            with open(self.cache_path, "r", encoding="utf-8") as cache_file:
+                data = json.load(cache_file)
+        except FileNotFoundError:
+            data = deepcopy(_EMPTY_CACHE)
+        except json.JSONDecodeError:
+            logger.warning("Cache file corrupted. Re-initializing JSON cache.")
+            data = deepcopy(_EMPTY_CACHE)
+
+        # Ensure required keys exist
+        data.setdefault("assessments", [])
+        data.setdefault("raw_data", {})
+        return data
+
+    def _save_cache(self, data: Dict[str, Any]) -> None:
+        with open(self.cache_path, "w", encoding="utf-8") as cache_file:
+            json.dump(data, cache_file, indent=2)
+
+    @staticmethod
+    def _normalize(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        return normalized or None
+
+    @staticmethod
+    def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _deepcopy(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return deepcopy(payload)
+
+    def _hydrate_result(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        payload = self._deepcopy(entry.get("result", {}))
+        payload.setdefault("_cached", True)
+        payload.setdefault("_cache_timestamp", entry.get("updated_at"))
+        payload.setdefault("_cache_source", "assessment-cache")
+        payload.setdefault("_cache_query", entry.get("query"))
+        return payload
+
+    def _find_entry(self, entries: List[Dict[str, Any]], *,
+                    query: Optional[str] = None,
+                    product_name: Optional[str] = None,
+                    vendor: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        for entry in entries:
+            if query and entry.get("query") == query:
+                return entry
+            if product_name and entry.get("product_name_norm") == product_name:
+                return entry
+            if not product_name and vendor and entry.get("vendor_norm") == vendor and not entry.get("product_name_norm"):
+                return entry
+        return None
+
+    def _next_id(self, entries: List[Dict[str, Any]]) -> int:
+        if not entries:
+            return 1
+        return max(entry.get("id", 0) for entry in entries) + 1
+
+    def get_assessment_by_query(self, search_term: str, max_age_hours: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        if not search_term:
+            return None
+
+        normalized_query = self._normalize(search_term)
+        if not normalized_query:
+            return None
+
+        logger.info(f"[CACHE] Lookup: '{search_term}' (normalized: '{normalized_query}')")
         
+        data = self._load_cache()
+        logger.info(f"[CACHE] Loaded {len(data['assessments'])} entries from cache file")
+        
+        cutoff = datetime.now() - timedelta(hours=max_age_hours or self.default_expiry_hours)
+
+        for idx, entry in enumerate(data["assessments"]):
+            entry_query = entry.get("query")
+            logger.info(f"[CACHE]   Entry {idx}: query='{entry_query}', product='{entry.get('product_name_norm')}', vendor='{entry.get('vendor_norm')}'")
+            
+            if not self._query_matches_entry(normalized_query, entry):
+                continue
+
+            logger.info(f"[CACHE]   ✓ Match found for '{normalized_query}' in entry {idx}")
+            
+            updated_at = self._parse_timestamp(entry.get("updated_at"))
+            if not updated_at or updated_at < cutoff:
+                logger.info(f"[CACHE]   ✗ Entry expired (updated: {updated_at}, cutoff: {cutoff})")
+                continue
+
+            logger.info(f"[CACHE]   ✓ HIT for '{search_term}' - returning cached result")
+            return self._hydrate_result(entry)
+
+        logger.info(f"[CACHE]   ✗ MISS for '{search_term}' - no valid entry found")
+        return None
+
+    @staticmethod
+    def _query_matches_entry(normalized_query: str, entry: Dict[str, Any]) -> bool:
+        if entry.get("query") == normalized_query:
+            return True
+
+        for field in ("product_name_norm", "vendor_norm"):
+            value = entry.get(field)
+            if not value:
+                continue
+            if value == normalized_query:
+                return True
+
+            # Basic fuzzy match: allow substring matches in either direction
+            if normalized_query in value or value in normalized_query:
+                return True
+
+        return False
+
+    def get_assessment(self, product_name: Optional[str] = None, vendor: Optional[str] = None,
+                       max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
         if not product_name and not vendor:
             return None
-        
-        session = self._get_session()
-        try:
-            cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
-            
-            if product_name:
-                assessment = session.query(Assessment).filter(
-                    Assessment.product_name == product_name,
-                    Assessment.updated_at > cutoff_time
-                ).order_by(Assessment.updated_at.desc()).first()
+
+        normalized_product = self._normalize(product_name)
+        normalized_vendor = self._normalize(vendor)
+        data = self._load_cache()
+        cutoff = datetime.now() - timedelta(hours=max_age_hours)
+
+        for entry in data["assessments"]:
+            if normalized_product and entry.get("product_name_norm") != normalized_product:
+                continue
+            if not normalized_product and normalized_vendor and entry.get("vendor_norm") != normalized_vendor:
+                continue
+
+            updated_at = self._parse_timestamp(entry.get("updated_at"))
+            if not updated_at or updated_at < cutoff:
+                continue
+
+            return self._hydrate_result(entry)
+
+        return None
+
+    def save_assessment(self, product_name: Optional[str], assessment_data: Dict[str, Any],
+                        vendor: Optional[str] = None, url: Optional[str] = None,
+                        search_term: Optional[str] = None) -> int:
+        if not any([product_name, vendor, search_term]):
+            raise ValueError("At least one identifier is required to store an assessment")
+
+        normalized_query = self._normalize(search_term)
+        normalized_product = self._normalize(product_name)
+        normalized_vendor = self._normalize(vendor)
+        now = datetime.now().isoformat()
+
+        logger.info(f"[CACHE] Saving: query='{search_term}' (norm: '{normalized_query}'), product='{product_name}', vendor='{vendor}'")
+
+        with self._lock:
+            data = self._load_cache()
+            entries = data["assessments"]
+            entry = self._find_entry(entries, query=normalized_query,
+                                     product_name=normalized_product, vendor=normalized_vendor)
+
+            if entry is None:
+                logger.info(f"[CACHE]   Creating new entry (ID: {self._next_id(entries)})")
+                entry = {
+                    "id": self._next_id(entries),
+                    "created_at": now
+                }
+                entries.append(entry)
+
             else:
-                assessment = session.query(Assessment).filter(
-                    Assessment.vendor == vendor,
-                    Assessment.product_name.is_(None),
-                    Assessment.updated_at > cutoff_time
-                ).order_by(Assessment.updated_at.desc()).first()
+                logger.info(f"[CACHE]   Updating existing entry (ID: {entry.get('id')})")
             
-            if assessment:
-                result = json.loads(assessment.assessment_data)
-                result['_cached'] = True
-                result['_cache_timestamp'] = assessment.updated_at.isoformat()
-                return result
-            
-            return None
-            
-        finally:
-            session.close()
-    
+            entry.update({
+                "query": normalized_query,
+                "product_name": product_name,
+                "vendor": vendor,
+                "url": url,
+                "product_name_norm": normalized_product,
+                "vendor_norm": normalized_vendor,
+                "result": self._deepcopy(assessment_data),
+                "trust_score": self._extract_trust_score(assessment_data),
+                "updated_at": now
+            })
+
+            self._save_cache(data)
+            logger.info(f"[CACHE]   ✓ Saved successfully (ID: {entry['id']}, total: {len(entries)} entries)")
+            return entry["id"]
+
+    @staticmethod
+    def _extract_trust_score(assessment_data: Dict[str, Any]) -> Optional[int]:
+        trust = assessment_data.get("trust_score", {}) if isinstance(assessment_data, dict) else {}
+        if isinstance(trust, dict):
+            for key in ("score", "total_score"):
+                value = trust.get(key)
+                if isinstance(value, (int, float)):
+                    return int(value)
+        return None
+
     def get_all_assessments(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get all assessments using ORM"""
-        
-        session = self._get_session()
-        try:
-            assessments = session.query(Assessment).order_by(
-                Assessment.updated_at.desc()
-            ).limit(limit).all()
-            
-            return [assessment.to_dict() for assessment in assessments]
-            
-        finally:
-            session.close()
-    
-    def save_raw_data(self, cache_key: str, data_type: str, data: Any, 
-                     expiry_hours: int = 24) -> None:
-        """Cache raw API data using ORM"""
-        
-        session = self._get_session()
-        try:
-            expires_at = datetime.now() + timedelta(hours=expiry_hours)
-            data_json = json.dumps(data)
-            
-            # Check if cache entry exists
-            existing = session.query(DataCache).filter(
-                DataCache.cache_key == cache_key
-            ).first()
-            
-            if existing:
-                # Update existing
-                existing.data_type = data_type
-                existing.data = data_json
-                existing.expires_at = expires_at
-                existing.created_at = datetime.now()
-            else:
-                # Insert new
-                new_cache = DataCache(
-                    cache_key=cache_key,
-                    data_type=data_type,
-                    data=data_json,
-                    expires_at=expires_at
-                )
-                session.add(new_cache)
-            
-            session.commit()
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error saving raw data: {e}")
-            raise
-        finally:
-            session.close()
-    
-    def get_raw_data(self, cache_key: str) -> Optional[Any]:
-        """Retrieve cached raw data if not expired using ORM"""
-        
-        session = self._get_session()
-        try:
-            cache_entry = session.query(DataCache).filter(
-                DataCache.cache_key == cache_key,
-                DataCache.expires_at > datetime.now()
-            ).first()
-            
-            if cache_entry:
-                return json.loads(cache_entry.data)
-            
-            return None
-            
-        finally:
-            session.close()
-    
-    def cleanup_expired(self) -> int:
-        """Remove expired cache entries using ORM"""
-        
-        session = self._get_session()
-        try:
-            deleted = session.query(DataCache).filter(
-                DataCache.expires_at < datetime.now()
-            ).delete()
-            
-            cursor.execute("""
-                DELETE FROM data_cache
-                WHERE expires_at < CURRENT_TIMESTAMP
-            """)
-            
-            deleted = cursor.rowcount
-            conn.commit()
+        data = self._load_cache()
+        entries = data["assessments"]
+        sorted_entries = sorted(
+            entries,
+            key=lambda item: self._parse_timestamp(item.get("updated_at")) or datetime.min,
+            reverse=True
+        )
 
-            return deleted
-            
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error cleaning up expired cache: {e}")
-            raise
-        finally:
-            session.close()
+        result = []
+        for entry in sorted_entries[:limit]:
+            result.append({
+                "id": entry.get("id"),
+                "product_name": entry.get("product_name"),
+                "vendor": entry.get("vendor"),
+                "trust_score": entry.get("trust_score"),
+                "created_at": entry.get("created_at"),
+                "updated_at": entry.get("updated_at")
+            })
+
+        return result
+
+    def get_assessment_by_id(self, assessment_id: int) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific cached assessment by its ID"""
+        logger.info(f"[CACHE] Looking up assessment by ID: {assessment_id}")
+        data = self._load_cache()
+        entries = data["assessments"]
+        
+        for entry in entries:
+            if entry.get("id") == assessment_id:
+                logger.info(f"[CACHE] ✓ Found assessment ID {assessment_id}")
+                return self._hydrate_result(entry)
+        
+        logger.info(f"[CACHE] ✗ Assessment ID {assessment_id} not found")
+        return None
+
+    def save_raw_data(self, cache_key: str, data_type: str, data: Any,
+                      expiry_hours: Optional[int] = None) -> None:
+        if not cache_key:
+            return
+
+        expires_at = datetime.now() + timedelta(hours=expiry_hours or self.default_expiry_hours)
+        with self._lock:
+            payload = self._load_cache()
+            payload["raw_data"][cache_key] = {
+                "data_type": data_type,
+                "data": data,
+                "created_at": datetime.now().isoformat(),
+                "expires_at": expires_at.isoformat()
+            }
+            self._save_cache(payload)
+
+    def get_raw_data(self, cache_key: str) -> Optional[Any]:
+        if not cache_key:
+            return None
+
+        payload = self._load_cache()
+        entry = payload["raw_data"].get(cache_key)
+        if not entry:
+            return None
+
+        expires_at = self._parse_timestamp(entry.get("expires_at"))
+        if not expires_at or expires_at < datetime.now():
+            with self._lock:
+                payload = self._load_cache()
+                payload["raw_data"].pop(cache_key, None)
+                self._save_cache(payload)
+            return None
+
+        return entry.get("data")
+
+    def cleanup_expired(self) -> int:
+        payload = self._load_cache()
+        now = datetime.now()
+        removed = []
+        for key, entry in list(payload["raw_data"].items()):
+            expires_at = self._parse_timestamp(entry.get("expires_at"))
+            if not expires_at or expires_at < now:
+                removed.append(key)
+                payload["raw_data"].pop(key, None)
+
+        if removed:
+            with self._lock:
+                self._save_cache(payload)
+
+        return len(removed)

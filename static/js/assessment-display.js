@@ -278,11 +278,45 @@ function renderEntityInfo(entity, classification, isVirusTotalAnalysis) {
 
 function renderTrustScore(trustScore, scoreColor, isVirusTotalAnalysis) {
     const score = trustScore.score || trustScore.total_score || 0;
+    const insufficientData = trustScore.insufficient_data === true || trustScore.score === null;
     
     // Different title based on analysis type
     const titleIcon = isVirusTotalAnalysis ? '🛡️' : '🎯';
     const titleText = isVirusTotalAnalysis ? 'File Security Score' : 'Trust Score';
     const scoreType = isVirusTotalAnalysis ? '(VirusTotal Analysis)' : '(CVSS + EPSS + KEV)';
+    
+    // If insufficient data, show warning banner
+    if (insufficientData) {
+        return `
+            <div style="background: #fff3cd; border: 2px solid #ffc107; padding: 1.5rem; border-radius: 8px; margin-bottom: 2rem;">
+                <h3 style="color: #856404;">⚠️ Insufficient Data for Security Assessment</h3>
+                <div style="background: white; padding: 1rem; border-radius: 6px; margin-top: 1rem;">
+                    <p style="font-size: 1.1rem; color: #856404; margin-bottom: 1rem;">
+                        <strong>We cannot provide a comprehensive security score for this product/vendor.</strong>
+                    </p>
+                    <p style="color: #666; margin-bottom: 0.5rem;">
+                        <strong>Reason:</strong> ${trustScore.rationale || 'No vulnerability data available'}
+                    </p>
+                    ${trustScore.data_limitations && trustScore.data_limitations.length > 0 ? `
+                        <div style="margin-top: 1rem;">
+                            <strong>Data Limitations:</strong>
+                            <ul style="margin-top: 0.5rem; color: #666;">
+                                ${trustScore.data_limitations.map(limit => `<li>${limit}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                    <div style="background: #e3f2fd; padding: 1rem; border-radius: 6px; margin-top: 1rem; border-left: 4px solid #2196F3;">
+                        <strong>ℹ️ What This Means:</strong>
+                        <p style="margin-top: 0.5rem; margin-bottom: 0;">
+                            Without CVE (vulnerability) data, we cannot calculate CVSS, EPSS, or KEV scores. 
+                            This might indicate a very new product, niche software, or limited public security analysis. 
+                            Consider reviewing the alternative options below or conducting additional research.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
     
     // Use appropriate rendering based on analysis type
     const componentsHtml = isVirusTotalAnalysis ? renderVirusTotalComponents(trustScore) : renderNewScoringBreakdown(trustScore);

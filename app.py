@@ -123,6 +123,46 @@ def assess():
         else:
             assessment_input = input_text
         
+        # ============================================================
+        # CHECK CACHE FIRST - Before spawning any threads or doing work
+        # ============================================================
+        if use_cache:
+            logger.info(f"[CACHE] ========================================")
+            logger.info(f"[CACHE] use_cache={use_cache}, input_text='{input_text}'")
+            logger.info(f"[CACHE] Cache path: {assessor.cache.cache_path}")
+            logger.info(f"[CACHE] Cache expiry hours: {Config.CACHE_EXPIRY_HOURS}")
+            
+            cached_result = assessor.cache.get_assessment_by_query(
+                input_text,
+                max_age_hours=Config.CACHE_EXPIRY_HOURS
+            )
+            
+            logger.info(f"[CACHE] Result: {cached_result is not None}")
+            
+            if cached_result:
+                logger.info(f"[CACHE] ✓✓✓ HIT - Returning cached result immediately ✓✓✓")
+                # Add input metadata to cached result
+                cached_result['_input_metadata'] = {
+                    'raw_input': input_text,
+                    'parsed_type': parsed['input_type'],
+                    'detected_vendor': parsed.get('vendor'),
+                    'detected_product': parsed.get('product_name'),
+                    'sha1': parsed.get('sha1'),
+                    'virustotal_data': parsed.get('virustotal_data'),
+                    '_from_cache': True
+                }
+                
+                # Return cached result immediately without threading
+                return jsonify({
+                    'success': True,
+                    'session_id': session_id,
+                    'cached': True,
+                    'assessment': cached_result
+                })
+            else:
+                logger.info(f"[CACHE] ✗✗✗ MISS - Will perform full assessment ✗✗✗")
+                logger.info(f"[CACHE] ========================================")
+        
         # Create progress queue for this session
         progress_queue = queue.Queue()
         progress_queues[session_id] = progress_queue
@@ -144,7 +184,8 @@ def assess():
                     assessment_input, 
                     use_cache=use_cache,
                     progress_callback=progress_callback,
-                    virustotal_data=parsed.get('virustotal_data')  # Pass VirusTotal data if available
+                    virustotal_data=parsed.get('virustotal_data'),  # Pass VirusTotal data if available
+                    search_term=input_text
                 )
                 
                 # Add input metadata to result
@@ -254,6 +295,31 @@ def history():
         
     except Exception as e:
         logger.error(f"Error fetching history: {e}")
+        return render_template('error.html', error=str(e))
+
+@app.route('/assessment/<int:assessment_id>')
+def view_assessment(assessment_id):
+    """View a specific cached assessment by ID"""
+    
+    if not assessor:
+        return render_template('error.html', 
+                             error='Assessment service is not available.')
+    
+    try:
+        # Get the specific assessment from cache
+        assessment = assessor.get_assessment_by_id(assessment_id)
+        
+        if not assessment:
+            return render_template('error.html', 
+                                 error=f'Assessment #{assessment_id} not found.'), 404
+        
+        # Render the assessment on the main page
+        return render_template('index.html', 
+                             cached_assessment=assessment,
+                             show_cached=True)
+        
+    except Exception as e:
+        logger.error(f"Error fetching assessment {assessment_id}: {e}")
         return render_template('error.html', error=str(e))
 
 @app.route('/compare')
