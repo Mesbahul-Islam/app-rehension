@@ -227,7 +227,6 @@ OUTPUT FORMAT - MANDATORY:
         {
           "url": "Full URL",
           "status": "accessible|broken|redirect|timeout",
-          "status_code": 200,
           "notes": "Any issues found"
         }
       ],
@@ -240,17 +239,9 @@ OUTPUT FORMAT - MANDATORY:
     {
       "claim": "Claim that failed verification",
       "reason": "Why it was flagged",
-      "missing_citations": ["What citations are missing"],
-      "broken_urls": ["URLs that didn't work"]
+      "missing_citations": ["What citations are missing"]
     }
   ],
-  "url_verification_summary": {
-    "total_urls": 0,
-    "accessible": 0,
-    "broken": 0,
-    "redirected": 0,
-    "not_checked": 0
-  },
   "confidence_adjustments": [
     {
       "finding": "Which finding",
@@ -263,9 +254,9 @@ OUTPUT FORMAT - MANDATORY:
 }
 
 CRITICAL RULES:
-- Visit EVERY URL provided by research agent
-- No claim passes verification without accessible citations
-- Flag any broken URLs or missing citations
+- Review every citation provided by research agent
+- No claim passes verification without proper citations
+- Flag any missing or insufficient citations
 - Be strict: better to flag than miss errors
 
 You are the SECOND stage - ensure accuracy and prevent hallucinations."""
@@ -276,7 +267,7 @@ You are the SECOND stage - ensure accuracy and prevent hallucinations."""
     def _create_synthesis_agent(self):
         """
         Synthesis Agent: Compiles final verified report with validated citations
-        Role: Integration, prioritization, final recommendations
+        Role: Integration, prioritization, evidence-based reporting
         """
         
         @tool
@@ -284,14 +275,9 @@ You are the SECOND stage - ensure accuracy and prevent hallucinations."""
             """Prioritize findings by severity and confidence."""
             return f"Prioritized findings"
         
-        @tool
-        def generate_recommendations(analysis: str) -> str:
-            """Generate actionable recommendations."""
-            return f"Generated recommendations"
-        
         agent = create_agent(
             model=self._create_model(),
-            tools=[prioritize_findings, generate_recommendations],
+            tools=[prioritize_findings],
             system_prompt="""You are a CISO-level Security Assessment Synthesizer.
 
 Your role:
@@ -299,8 +285,7 @@ Your role:
 2. Keep ONLY claims with verified, accessible citations
 3. Remove or flag claims with broken URLs or missing evidence
 4. Prioritize findings by risk impact AND evidence quality
-5. Generate executive-ready recommendations
-6. Include transparent citation tracking
+5. Include transparent citation tracking
 
 SYNTHESIS PRIORITIES:
 - Trust verification agent's URL checks - if URL is broken, downgrade or remove claim
@@ -310,7 +295,6 @@ SYNTHESIS PRIORITIES:
   * PARTIALLY VERIFIED: Claims with some missing/broken URLs (⚠)
   * UNVERIFIED: Claims without proper citations (✗)
 - Mark each finding with evidence quality and citation status
-- Provide actionable, prioritized recommendations
 - Include complete citation list with URL status
 
 OUTPUT FORMAT - MANDATORY:
@@ -323,8 +307,7 @@ OUTPUT FORMAT - MANDATORY:
       "citations": [
         {
           "source": "Source name",
-          "url": "Verified accessible URL",
-          "url_status": "✓ accessible",
+          "url": "Referenced URL",
           "quote": "Supporting quote"
         }
       ],
@@ -334,31 +317,16 @@ OUTPUT FORMAT - MANDATORY:
   "partially_verified_findings": [
     {
       "finding": "Claim with some issues",
-      "issue": "Some URLs broken or evidence incomplete",
-      "accessible_citations": [],
-      "broken_citations": []
+      "issue": "Evidence incomplete or needs clarification",
+      "citations": []
     }
   ],
   "unverified_claims": [
     {
       "claim": "Could not verify",
-      "reason": "Missing citations or all URLs broken"
+      "reason": "Missing citations or insufficient evidence"
     }
   ],
-  "recommendations": [
-    {
-      "priority": "CRITICAL|HIGH|MEDIUM|LOW",
-      "action": "What to do",
-      "reason": "Why this matters",
-      "evidence": ["Citations supporting this recommendation"]
-    }
-  ],
-  "citation_summary": {
-    "total_citations": 0,
-    "verified_urls": 0,
-    "broken_urls": 0,
-    "citation_quality": "excellent|good|fair|poor"
-  },
   "transparency_notes": [
     "Any limitations in evidence",
     "Data sources not available",
@@ -387,7 +355,9 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
         incidents: Dict,
         data_compliance: Dict,
         deployment_controls: Dict,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        virustotal_data: Optional[Dict] = None,
+        is_virustotal_analysis: bool = False
     ) -> Dict[str, Any]:
         """
         Run multi-agent analysis pipeline:
@@ -412,45 +382,23 @@ You are the FINAL stage - produce the authoritative, citation-backed report."""
                 "deployment_controls": deployment_controls
             }
             
+            # Add VirusTotal data if available
+            if virustotal_data:
+                analysis_data["virustotal"] = virustotal_data
+            
             data_str = json.dumps(analysis_data, indent=2)
             
             progress.update("preparation", "completed", "Data prepared successfully")
             
             # Stage 1: Research Agent Analysis
             progress.update("research", "in_progress", "Research Agent analyzing security data...")
-            logger.info("Stage 1: Research Agent generating initial analysis...")
+            logger.info(f"Stage 1: Research Agent generating initial analysis - Mode: {'VirusTotal' if is_virustotal_analysis else 'Product/Vendor'}")
             
-            research_prompt = f"""Analyze this security data and generate comprehensive findings with MANDATORY citations:
-
-{data_str}
-
-Provide detailed analysis covering:
-1. Vulnerability trends and severity assessment
-2. Security practices evaluation
-3. Incident history assessment
-4. Compliance posture
-5. Deployment security controls
-
-CRITICAL: Every claim MUST include citations. Output in JSON format:
-{{
-  "findings": [
-    {{
-      "claim": "specific finding statement",
-      "severity": "critical|high|medium|low",
-      "category": "vulnerability|security_practice|incident|compliance|deployment",
-      "source_type": "vendor|independent|mixed",
-      "citations": [
-        {{
-          "source": "source name",
-          "url": "full URL to reference",
-          "quote": "exact quote or data point",
-          "accessed": "{datetime.now().strftime('%Y-%m-%d')}"
-        }}
-      ]
-    }}
-  ],
-  "uncited_assumptions": []
-}}"""
+            # Use different prompts based on analysis type
+            if is_virustotal_analysis:
+                research_prompt = self._get_virustotal_research_prompt(data_str, virustotal_data)
+            else:
+                research_prompt = self._get_standard_research_prompt(data_str)
             
             research_result = self.research_agent.invoke({
                 "messages": [{"role": "user", "content": research_prompt}]
@@ -544,25 +492,14 @@ CRITICAL REQUIREMENTS:
    - verified_findings: Claims with ALL URLs accessible (status 200)
    - partially_verified_findings: Claims with SOME broken URLs
    - unverified_claims: Claims with NO accessible citations
-2. Mark each citation with url_status:
-   - ✓ for accessible URLs (200)
-   - ⚠ for redirects (3xx)
-   - ✗ for broken URLs (4xx, 5xx, timeout)
-3. Include citation_summary with counts
-4. NO claim in final report without at least one accessible URL
+2. Include citations with all findings
+3. NO claim in final report without proper citations
 
 Output final assessment in JSON format:
 {{
   "verified_findings": [],
   "partially_verified_findings": [],
   "unverified_claims": [],
-  "citation_summary": {{
-    "total_citations": 0,
-    "verified_urls": 0,
-    "broken_urls": 0,
-    "url_verification_rate": "0%"
-  }},
-  "recommendations": [],
   "data_quality_notes": []
 }}"""
             
@@ -574,6 +511,18 @@ Output final assessment in JSON format:
             progress.update("synthesis", "completed", "Final report generated")
             logger.info("Stage 3 complete: Final synthesis report generated")
             
+            # Parse verification results to extract broken URLs
+            verification_data = {}
+            try:
+                verification_text = verification_analysis
+                if "```json" in verification_text:
+                    verification_text = verification_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in verification_text:
+                    verification_text = verification_text.split("```")[1].split("```")[0].strip()
+                verification_data = json.loads(verification_text)
+            except json.JSONDecodeError:
+                logger.warning("Verification output not in JSON format")
+            
             # Parse final report (expect JSON)
             try:
                 # Extract JSON from markdown code blocks if present
@@ -584,6 +533,14 @@ Output final assessment in JSON format:
                 
                 final_assessment = json.loads(final_report)
                 
+                # Add broken URLs from verification if not already present
+                if 'broken_urls' not in final_assessment and 'broken_urls' in verification_data:
+                    final_assessment['broken_urls'] = verification_data['broken_urls']
+                
+                # Add URL checks from verification for debugging
+                if 'url_checks' in verification_data:
+                    final_assessment['_url_verification_details'] = verification_data['url_checks']
+                
             except json.JSONDecodeError:
                 logger.warning("Final report not in JSON format, wrapping as text")
                 final_assessment = {
@@ -591,6 +548,9 @@ Output final assessment in JSON format:
                     "format": "text",
                     "agents_used": ["research", "verification", "synthesis"]
                 }
+                # Still try to include broken URLs
+                if 'broken_urls' in verification_data:
+                    final_assessment['broken_urls'] = verification_data['broken_urls']
             
             # Add multi-agent metadata
             final_assessment["_multi_agent_metadata"] = {
@@ -599,6 +559,41 @@ Output final assessment in JSON format:
                 "verification_applied": True,
                 "confidence_validated": True
             }
+            
+            # Extract all citations from findings for frontend display
+            all_citations = []
+            
+            # Extract from verified_findings
+            for finding in final_assessment.get('verified_findings', []):
+                for citation in finding.get('citations', []):
+                    citation_obj = {
+                        'source': citation.get('source', 'Unknown'),
+                        'url': citation.get('url', ''),
+                        'quote': citation.get('quote', ''),
+                        'content': finding.get('claim', ''),  # Include the claim as context
+                        'source_type': finding.get('source_type', 'unknown'),
+                        'accessed': citation.get('accessed', '')
+                    }
+                    all_citations.append(citation_obj)
+            
+            # Extract from partially_verified_findings
+            for finding in final_assessment.get('partially_verified_findings', []):
+                for citation in finding.get('citations', []):
+                    citation_obj = {
+                        'source': citation.get('source', 'Unknown'),
+                        'url': citation.get('url', ''),
+                        'quote': citation.get('quote', ''),
+                        'content': finding.get('claim', ''),
+                        'source_type': finding.get('source_type', 'unknown'),
+                        'accessed': citation.get('accessed', '')
+                    }
+                    all_citations.append(citation_obj)
+            
+            # Add citations to assessment for frontend display
+            if all_citations:
+                final_assessment['citations'] = all_citations
+            
+            logger.info(f"Multi-agent analysis complete with {len(all_citations)} citations")
             
             return final_assessment
             
@@ -638,3 +633,118 @@ Output in JSON format."""
             return json.loads(verification)
         except:
             return {"verification": verification, "format": "text"}
+    
+    def _get_standard_research_prompt(self, data_str: str) -> str:
+        """Generate research prompt for standard product/vendor analysis"""
+        return f"""Analyze this security data and generate comprehensive findings with MANDATORY citations:
+
+{data_str}
+
+Provide detailed analysis covering:
+1. Vulnerability trends and severity assessment
+2. Security practices evaluation
+3. Incident history assessment
+4. Compliance posture
+5. Deployment security controls
+
+CRITICAL: Every claim MUST include citations. Output in JSON format:
+{{
+  "findings": [
+    {{
+      "claim": "specific finding statement",
+      "severity": "critical|high|medium|low",
+      "category": "vulnerability|security_practice|incident|compliance|deployment",
+      "source_type": "vendor|independent|mixed",
+      "citations": [
+        {{
+          "source": "source name",
+          "url": "full URL to reference",
+          "quote": "exact quote or data point",
+          "accessed": "{datetime.now().strftime('%Y-%m-%d')}"
+        }}
+      ]
+    }}
+  ],
+  "uncited_assumptions": []
+}}"""
+    
+    def _get_virustotal_research_prompt(self, data_str: str, virustotal_data: Dict) -> str:
+        """Generate research prompt for VirusTotal file analysis"""
+        
+        detection_stats = virustotal_data.get('detection_stats', {})
+        malicious = detection_stats.get('malicious', 0)
+        suspicious = detection_stats.get('suspicious', 0)
+        total = sum(detection_stats.values())
+        
+        return f"""Analyze this VirusTotal file security data and generate comprehensive findings with MANDATORY citations:
+
+{data_str}
+
+FILE ANALYSIS CONTEXT:
+- This is a FILE HASH analysis from VirusTotal, NOT a product/vendor assessment
+- Detection Ratio: {virustotal_data.get('detection_ratio', 'Unknown')}
+- Malicious Detections: {malicious}/{total}
+- Suspicious Detections: {suspicious}/{total}
+- File Type: {virustotal_data.get('type', 'Unknown')}
+- File Name: {virustotal_data.get('primary_name', 'Unknown')}
+
+FOCUS YOUR ANALYSIS ON:
+1. **Detection Analysis**: Evaluate the AV engine detection results
+   - Which engines flagged it and what did they call it?
+   - Are the detections consistent or conflicting?
+   - What is the threat severity based on detection patterns?
+
+2. **File Characteristics**: Assess file properties and reputation
+   - Digital signature verification status
+   - File age and version information
+   - Multiple names (could indicate obfuscation)
+   - File type risk assessment
+
+3. **Threat Classification**: Evaluate identified threats
+   - What threat categories were identified?
+   - Known malware families or behaviors
+   - Risk to system if executed
+
+4. **Vendor/Publisher Trust**: Assess the file publisher
+   - Is it signed by a known vendor?
+   - Signature verification status
+   - Publisher reputation
+
+5. **Behavioral Indicators**: Security concerns
+   - Any sandbox/dynamic analysis results
+   - Known exploited vulnerabilities in this file
+   - Historical incidents or campaigns using this file
+
+DO NOT analyze:
+- Product roadmap or feature sets
+- Business compliance (unless related to malware behavior)
+- Deployment controls (not applicable to file analysis)
+
+CRITICAL: Every claim MUST cite VirusTotal data. Output in JSON format:
+{{
+  "findings": [
+    {{
+      "claim": "specific finding about the file",
+      "severity": "critical|high|medium|low",
+      "category": "detection|file_characteristics|threat_classification|vendor_trust|behavioral",
+      "source_type": "independent",
+      "citations": [
+        {{
+          "source": "VirusTotal",
+          "url": "{virustotal_data.get('source_url', 'https://www.virustotal.com')}",
+          "quote": "specific data point from VT analysis",
+          "accessed": "{datetime.now().strftime('%Y-%m-%d')}"
+        }}
+      ],
+      "detection_context": {{
+        "av_engines_flagged": 0,
+        "threat_names": []
+      }}
+    }}
+  ],
+  "analysis_type": "virustotal_file_analysis",
+  "file_verdict": "clean|suspicious|malicious",
+  "confidence": "high|medium|low",
+  "uncited_assumptions": []
+}}"""
+

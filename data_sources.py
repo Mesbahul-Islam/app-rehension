@@ -435,6 +435,137 @@ class CISAKEVAPI:
         }
 
 
+class VirusTotalAPI:
+    """Fetch file analysis information from VirusTotal API"""
+    
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.base_url = "https://www.virustotal.com/api/v3"
+        self.headers = {
+            "x-apikey": self.api_key,
+            "Accept": "application/json"
+        }
+        
+    def lookup_hash(self, sha1_hash: str) -> Optional[Dict[str, Any]]:
+        """
+        Look up a file by its SHA1 hash.
+        
+        Args:
+            sha1_hash: The SHA1 hash of the file to look up
+            
+        Returns:
+            Dictionary containing file analysis data or None if not found
+        """
+        sha1_hash = sha1_hash.strip().lower()
+        
+        try:
+            # Look up file by hash
+            url = f"{self.base_url}/files/{sha1_hash}"
+            response = requests.get(url, headers=self.headers, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return self._format_virustotal_data(data)
+            elif response.status_code == 404:
+                logger.warning(f"Hash {sha1_hash} not found in VirusTotal")
+                return None
+            else:
+                logger.warning(f"VirusTotal API returned status {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error fetching from VirusTotal: {e}")
+            return None
+    
+    def _format_virustotal_data(self, response_data: Dict) -> Dict[str, Any]:
+        """Format VirusTotal API response data"""
+        
+        data = response_data.get('data', {})
+        attributes = data.get('attributes', {})
+        
+        # Basic file information
+        file_info = {
+            "sha1": attributes.get('sha1', ''),
+            "sha256": attributes.get('sha256', ''),
+            "md5": attributes.get('md5', ''),
+            "size": attributes.get('size', 0),
+            "type": attributes.get('type_description', ''),
+            "file_type": attributes.get('type_tag', ''),
+        }
+        
+        # File names
+        names = attributes.get('names', [])
+        if names:
+            file_info['names'] = names[:10]  # Limit to first 10 names
+            file_info['primary_name'] = names[0]
+        
+        # Analysis statistics
+        last_analysis = attributes.get('last_analysis_stats', {})
+        file_info['detection_stats'] = {
+            "malicious": last_analysis.get('malicious', 0),
+            "suspicious": last_analysis.get('suspicious', 0),
+            "undetected": last_analysis.get('undetected', 0),
+            "harmless": last_analysis.get('harmless', 0),
+            "failure": last_analysis.get('failure', 0),
+            "timeout": last_analysis.get('timeout', 0)
+        }
+        
+        # Calculate detection ratio
+        total_scans = sum(last_analysis.values()) if last_analysis else 0
+        detections = last_analysis.get('malicious', 0) + last_analysis.get('suspicious', 0)
+        file_info['detection_ratio'] = f"{detections}/{total_scans}" if total_scans > 0 else "0/0"
+        
+        # Analysis date
+        last_analysis_date = attributes.get('last_analysis_date')
+        if last_analysis_date:
+            file_info['last_analysis_date'] = datetime.fromtimestamp(last_analysis_date).isoformat()
+        
+        # Signature information
+        signature_info = attributes.get('signature_info', {})
+        if signature_info:
+            file_info['signature'] = {
+                "verified": signature_info.get('verified', ''),
+                "product": signature_info.get('product', ''),
+                "description": signature_info.get('description', ''),
+                "copyright": signature_info.get('copyright', ''),
+                "signers": signature_info.get('signers', '')
+            }
+        
+        # Popular threat names
+        popular_threat_category = attributes.get('popular_threat_classification', {})
+        if popular_threat_category:
+            file_info['threat_classification'] = {
+                "suggested_threat_label": popular_threat_category.get('suggested_threat_label', ''),
+                "popular_threat_category": popular_threat_category.get('popular_threat_category', [])
+            }
+        
+        # Tags
+        tags = attributes.get('tags', [])
+        if tags:
+            file_info['tags'] = tags
+        
+        # Extract vendor and product information from signature or names
+        vendor = None
+        product = None
+        
+        if signature_info:
+            # Try to extract from signature
+            vendor = signature_info.get('signers', '') or signature_info.get('copyright', '')
+            product = signature_info.get('product', '') or signature_info.get('description', '')
+        
+        if not product and names:
+            # Try to extract from primary filename
+            product = names[0]
+        
+        file_info['vendor'] = vendor
+        file_info['product'] = product
+        file_info['source'] = "VirusTotal"
+        file_info['source_type'] = "independent"
+        file_info['source_url'] = f"https://www.virustotal.com/gui/file/{file_info['sha1']}"
+        
+        return file_info
+
+
 class WebSourceFetcher:
     """Fetch additional context from web sources"""
     

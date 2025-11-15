@@ -4,19 +4,22 @@
 <div class="card">
     <h2>Assess a Product</h2>
     <p style="margin-bottom: 1.5rem; color: #666;">
-        Enter a product name, vendor, or URL to generate a comprehensive security assessment.
+        Enter a product name, vendor, URL, or SHA1 hash to generate a comprehensive security assessment.
     </p>
     
     <form id="assessmentForm">
         <div class="form-group">
-            <label for="input_text">Product Name, Vendor, or URL</label>
+            <label for="input_text">Product Name, Vendor, URL, or SHA1 Hash</label>
             <input 
                 type="text" 
                 id="input_text" 
                 name="input_text" 
-                placeholder="e.g., Slack, Microsoft Teams, https://example.com"
+                placeholder="e.g., Slack, Microsoft Teams, https://example.com, or bcd9fd198cab024450c1f2d09d83aeeeee6a2a4a"
                 required
             >
+            <small style="color: #888; display: block; margin-top: 0.5rem;">
+                SHA1 hashes will be automatically looked up in VirusTotal to identify the product.
+            </small>
         </div>
         
         <div class="form-group">
@@ -73,7 +76,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/progress-tracker.js') }}"></script>
-<script src="{{ url_for('static', filename='js/assessment-display.js') }}"></script>
-<script src="{{ url_for('static', filename='js/form-handler.js') }}"></script>
+<script src="{{ url_for('static', filename='js/progress-tracker.js') }}?v=7"></script>
+<script src="{{ url_for('static', filename='js/assessment-display.js') }}?v=7"></script>
+<script src="{{ url_for('static', filename='js/form-handler.js') }}?v=7"></script>
 {% endblock %}

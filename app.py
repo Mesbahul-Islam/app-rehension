@@ -11,6 +11,7 @@ from datetime import datetime
 from config import Config
 from assessor import SecurityAssessor
 from input_parser import InputParser
+from data_sources import VirusTotalAPI
 
 # Configure logging
 logging.basicConfig(
@@ -26,10 +27,23 @@ app.config.from_object(Config)
 # Initialize assessor
 try:
     assessor = SecurityAssessor(Config)
+    
+    # Initialize VirusTotal API if key is available
+    virustotal_api = None
+    if Config.VIRUSTOTAL_API_KEY:
+        virustotal_api = VirusTotalAPI(Config.VIRUSTOTAL_API_KEY)
+        logger.info("VirusTotal API initialized successfully")
+    else:
+        logger.warning("VirusTotal API key not configured - SHA1 hash lookups will not be available")
+    
+    # Initialize input parser with VirusTotal API
+    input_parser = InputParser(virustotal_api=virustotal_api)
+    
     logger.info("Security Assessor initialized successfully")
 except Exception as e:
     logger.error(f"Failed to initialize Security Assessor: {e}")
     assessor = None
+    input_parser = InputParser()  # Fallback without VirusTotal
 
 # Store progress queues for each assessment (keyed by session ID)
 progress_queues = {}
@@ -64,19 +78,50 @@ def assess():
         
         logger.info(f"Assessment request for: {input_text} [session: {session_id}]")
         
-        # Parse input to detect format
-        parsed = InputParser.parse_input(input_text)
+        # Check if input is SHA1 - must have VirusTotal configured
+        from input_parser import InputParser as StaticParser
+        if StaticParser.is_sha1(input_text):
+            if not virustotal_api:
+                logger.error("SHA1 hash provided but VirusTotal API is not configured")
+                return jsonify({
+                    'error': 'SHA1 hash detected but VirusTotal API is not configured. Please add VIRUSTOTAL_API_KEY to your .env file. Get a free API key at: https://www.virustotal.com/gui/join-us',
+                    'input_type': 'sha1',
+                    'sha1': input_text.strip().lower(),
+                    'setup_required': True
+                }), 400
+        
+        # Parse input to detect format (will perform VirusTotal lookup for SHA1)
+        parsed = input_parser.parse_input(input_text)
         logger.info(f"Parsed input type: {parsed['input_type']}")
         
-        # For SHA1, we could look it up in a dataset first
-        # For now, we'll assess using the SHA1 as identifier
+        # For SHA1 hashes, VirusTotal lookup is MANDATORY
         if parsed['input_type'] == 'sha1':
-            logger.warning(f"SHA1 hash provided: {parsed['sha1'][:8]}... - Cannot directly assess. Need product/vendor name.")
-            return jsonify({
-                'error': 'SHA1 hash detected. Please provide the product name or vendor instead. SHA1-based assessment requires additional dataset mapping.',
-                'input_type': 'sha1',
-                'sha1': parsed['sha1']
-            }), 400
+            if not parsed.get('virustotal_data'):
+                # This means VirusTotal lookup failed or hash not found
+                logger.warning(f"SHA1 hash provided: {parsed['sha1'][:8]}... - No VirusTotal data available")
+                return jsonify({
+                    'error': f'SHA1 hash {parsed["sha1"][:8]}... not found in VirusTotal database. The file may not have been scanned yet. Please upload the file to VirusTotal first, or provide the product name directly.',
+                    'input_type': 'sha1',
+                    'sha1': parsed['sha1'],
+                    'virustotal_url': f"https://www.virustotal.com/gui/file/{parsed['sha1']}",
+                    'suggestion': 'Try uploading the file at https://www.virustotal.com/gui/home/upload'
+                }), 404
+            
+            # VirusTotal data is available - proceed with assessment
+            vt_data = parsed['virustotal_data']
+            logger.info(f"✓ VirusTotal lookup successful for SHA1: {parsed['sha1'][:8]}...")
+            logger.info(f"  File: {vt_data.get('primary_name', 'Unknown')}")
+            logger.info(f"  Detection ratio: {vt_data.get('detection_ratio', 'N/A')}")
+            logger.info(f"  File type: {vt_data.get('type', 'Unknown')}")
+            
+            # Use product name from VirusTotal if available
+            if parsed['product_name']:
+                assessment_input = parsed['product_name']
+            else:
+                # Fall back to primary file name
+                assessment_input = vt_data.get('primary_name', f"[SHA1: {parsed['sha1'][:8]}...]")
+            
+            logger.info(f"Using assessment input from VirusTotal: {assessment_input}")
         
         # For vendor_product format, pass the product name only
         # The assessor will try to resolve the vendor internally via LLM
@@ -107,7 +152,8 @@ def assess():
                 result = assessor.assess_product(
                     assessment_input, 
                     use_cache=use_cache,
-                    progress_callback=progress_callback
+                    progress_callback=progress_callback,
+                    virustotal_data=parsed.get('virustotal_data')  # Pass VirusTotal data if available
                 )
                 
                 # Add input metadata to result
@@ -115,7 +161,9 @@ def assess():
                     'raw_input': input_text,
                     'parsed_type': parsed['input_type'],
                     'detected_vendor': parsed.get('vendor'),
-                    'detected_product': parsed.get('product_name')
+                    'detected_product': parsed.get('product_name'),
+                    'sha1': parsed.get('sha1'),
+                    'virustotal_data': parsed.get('virustotal_data')
                 }
                 
                 # Store result for later retrieval

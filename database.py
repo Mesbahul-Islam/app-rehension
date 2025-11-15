@@ -34,13 +34,14 @@ class AssessmentCache:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS assessments (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    product_name TEXT NOT NULL,
+                    product_name TEXT,
                     vendor TEXT,
                     url TEXT,
                     assessment_data TEXT NOT NULL,
                     trust_score INTEGER,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    CONSTRAINT check_product_or_vendor CHECK (product_name IS NOT NULL OR vendor IS NOT NULL)
                 )
             """)
             
@@ -73,22 +74,107 @@ class AssessmentCache:
             """)
             
             conn.commit()
+            
+        # Run migration if needed
+        self._migrate_schema_if_needed()
     
-    def save_assessment(self, product_name: str, assessment_data: Dict[str, Any], 
+    def _migrate_schema_if_needed(self):
+        """Migrate old schema to support vendor-only assessments"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Check if old schema exists (product_name with NOT NULL constraint)
+                cursor.execute("PRAGMA table_info(assessments)")
+                columns = cursor.fetchall()
+                
+                # Look for product_name column
+                product_name_col = None
+                for col in columns:
+                    if col[1] == 'product_name':
+                        product_name_col = col
+                        break
+                
+                # If product_name exists and has NOT NULL constraint (col[3] == 1)
+                if product_name_col and product_name_col[3] == 1:
+                    logger.info("Migrating database schema to support vendor-only assessments...")
+                    
+                    # SQLite doesn't support ALTER TABLE to modify constraints
+                    # We need to recreate the table
+                    
+                    # 1. Rename old table
+                    cursor.execute("ALTER TABLE assessments RENAME TO assessments_old")
+                    
+                    # 2. Create new table with updated schema
+                    cursor.execute("""
+                        CREATE TABLE assessments (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            product_name TEXT,
+                            vendor TEXT,
+                            url TEXT,
+                            assessment_data TEXT NOT NULL,
+                            trust_score INTEGER,
+                            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                            CONSTRAINT check_product_or_vendor CHECK (product_name IS NOT NULL OR vendor IS NOT NULL)
+                        )
+                    """)
+                    
+                    # 3. Copy data from old table
+                    cursor.execute("""
+                        INSERT INTO assessments (id, product_name, vendor, url, assessment_data, 
+                                                trust_score, created_at, updated_at)
+                        SELECT id, product_name, vendor, url, assessment_data, 
+                               trust_score, created_at, updated_at
+                        FROM assessments_old
+                    """)
+                    
+                    # 4. Drop old table
+                    cursor.execute("DROP TABLE assessments_old")
+                    
+                    # 5. Recreate indexes
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_product_name 
+                        ON assessments(product_name)
+                    """)
+                    
+                    cursor.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_vendor 
+                        ON assessments(vendor)
+                    """)
+                    
+                    conn.commit()
+                    logger.info("Database schema migration completed successfully")
+                    
+        except Exception as e:
+            logger.error(f"Error during schema migration: {e}")
+            # Don't fail initialization if migration fails
+    
+    def save_assessment(self, product_name: Optional[str], assessment_data: Dict[str, Any], 
                        vendor: Optional[str] = None, url: Optional[str] = None) -> int:
-        """Save or update an assessment"""
+        """Save or update an assessment (product or vendor)"""
+        
+        # Ensure at least one identifier is provided
+        if not product_name and not vendor:
+            raise ValueError("Either product_name or vendor must be provided")
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # Check if assessment exists
-            cursor.execute(
-                "SELECT id FROM assessments WHERE product_name = ?",
-                (product_name,)
-            )
+            # Check if assessment exists (by product_name or vendor)
+            if product_name:
+                cursor.execute(
+                    "SELECT id FROM assessments WHERE product_name = ?",
+                    (product_name,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT id FROM assessments WHERE vendor = ? AND product_name IS NULL",
+                    (vendor,)
+                )
             existing = cursor.fetchone()
             
-            trust_score = assessment_data.get('trust_score', {}).get('score')
+            trust_score = assessment_data.get('trust_score', {}).get('total_score')
             data_json = json.dumps(assessment_data, indent=2)
             
             if existing:
@@ -114,8 +200,12 @@ class AssessmentCache:
             conn.commit()
             return assessment_id
     
-    def get_assessment(self, product_name: str, max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
-        """Retrieve a cached assessment if it's fresh enough"""
+    def get_assessment(self, product_name: Optional[str] = None, vendor: Optional[str] = None, 
+                      max_age_hours: int = 24) -> Optional[Dict[str, Any]]:
+        """Retrieve a cached assessment if it's fresh enough (by product or vendor)"""
+        
+        if not product_name and not vendor:
+            return None
         
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -123,14 +213,24 @@ class AssessmentCache:
             
             cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
             
-            cursor.execute("""
-                SELECT assessment_data, created_at, updated_at
-                FROM assessments
-                WHERE product_name = ?
-                AND updated_at > ?
-                ORDER BY updated_at DESC
-                LIMIT 1
-            """, (product_name, cutoff_time))
+            if product_name:
+                cursor.execute("""
+                    SELECT assessment_data, created_at, updated_at
+                    FROM assessments
+                    WHERE product_name = ?
+                    AND updated_at > ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """, (product_name, cutoff_time))
+            else:
+                cursor.execute("""
+                    SELECT assessment_data, created_at, updated_at
+                    FROM assessments
+                    WHERE vendor = ? AND product_name IS NULL
+                    AND updated_at > ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """, (vendor, cutoff_time))
             
             row = cursor.fetchone()
             

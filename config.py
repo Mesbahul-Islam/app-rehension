@@ -10,6 +10,7 @@ class Config:
     GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
     PRODUCTHUNT_API_KEY = os.getenv('PRODUCTHUNT_API_KEY')
     NVD_API_KEY = os.getenv('NVD_API_KEY')  # Optional: Increases rate limits from 5 to 50 requests per 30 seconds
+    VIRUSTOTAL_API_KEY = os.getenv('VIRUSTOTAL_API_KEY')  # Required for SHA1 hash lookups
     
     # Deprecated - replaced by NVD API
     # OPENCVE_USERNAME = os.getenv('OPENCVE_USERNAME')

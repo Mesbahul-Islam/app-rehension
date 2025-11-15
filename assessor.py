@@ -5,12 +5,13 @@ import logging
 from typing import Dict, Any, Optional, Callable
 from datetime import datetime
 
-from data_sources import ProductHuntAPI, NVDAPI, CISAKEVAPI
+from data_sources import ProductHuntAPI, NVDAPI, CISAKEVAPI, VirusTotalAPI
 from llm_analyzer import GeminiAnalyzer
 from multi_agent_analyzer import MultiAgentAnalyzer
 from database import AssessmentCache
 from evidence import EvidenceRegistry
 from trust_scorer import TrustScorer
+from virustotal_trust_scorer import VirusTotalTrustScorer
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class SecurityAssessor:
         self.product_hunt = ProductHuntAPI(config.PRODUCTHUNT_API_KEY) if config.PRODUCTHUNT_API_KEY else None
         self.nvd = NVDAPI(api_key=config.NVD_API_KEY)
         self.cisa_kev = CISAKEVAPI()
+        self.virustotal = VirusTotalAPI(config.VIRUSTOTAL_API_KEY) if config.VIRUSTOTAL_API_KEY else None
         
         # Initialize analyzer based on configuration
         self.use_multi_agent = config.USE_MULTI_AGENT
@@ -32,7 +34,8 @@ class SecurityAssessor:
         if self.use_multi_agent:
             logger.info("Initializing MULTI-AGENT analyzer (Research + Verification + Synthesis)")
             self.multi_agent = MultiAgentAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
-            self.analyzer = None  # Keep single-agent for fallback
+            # Always initialize single-agent for utility functions
+            self.analyzer = GeminiAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
         else:
             logger.info("Initializing SINGLE-AGENT analyzer")
             self.analyzer = GeminiAnalyzer(config.GEMINI_API_KEY, config.GEMINI_MODEL)
@@ -40,21 +43,30 @@ class SecurityAssessor:
         
         self.cache = AssessmentCache(config.DATABASE_PATH)
         self.trust_scorer = TrustScorer()
+        self.virustotal_trust_scorer = VirusTotalTrustScorer()
         
         logger.info(f"SecurityAssessor initialized with {'MULTI-AGENT' if self.use_multi_agent else 'SINGLE-AGENT'} mode")
     
-    def assess_product(self, input_text: str, use_cache: bool = True, progress_callback: Optional[Callable] = None) -> Dict[str, Any]:
+    def assess_product(self, input_text: str, use_cache: bool = True, progress_callback: Optional[Callable] = None, 
+                      virustotal_data: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Main assessment workflow
         
         Args:
             input_text: Product name, vendor, or URL
             use_cache: Whether to use cached results if available
+            progress_callback: Optional callback for progress updates
+            virustotal_data: Optional VirusTotal data from SHA1 hash lookup
             
         Returns:
             Comprehensive security assessment
         """
         logger.info(f"Starting assessment for: {input_text}")
+        
+        if virustotal_data:
+            logger.info(f"VirusTotal data provided for assessment")
+            logger.info(f"  File: {virustotal_data.get('primary_name', 'Unknown')}")
+            logger.info(f"  Detection: {virustotal_data.get('detection_ratio', 'N/A')}")
         
         # Notify initial progress
         if progress_callback:
@@ -63,19 +75,6 @@ class SecurityAssessor:
                 "status": "in_progress",
                 "details": "Starting assessment workflow..."
             })
-        
-        # Check cache first
-        if use_cache:
-            cached = self.cache.get_assessment(input_text, max_age_hours=self.config.CACHE_EXPIRY_HOURS)
-            if cached:
-                logger.info(f"Returning cached assessment for: {input_text}")
-                if progress_callback:
-                    progress_callback({
-                        "stage": "cache",
-                        "status": "completed",
-                        "details": "Using cached results"
-                    })
-                return cached
         
         # Initialize evidence registry for this assessment
         evidence_registry = EvidenceRegistry()
@@ -89,7 +88,12 @@ class SecurityAssessor:
                 "details": "Gathering product information..."
             })
         
-        product_data = self._gather_product_data(input_text)
+        # If VirusTotal data is provided, use it instead of ProductHunt
+        if virustotal_data:
+            logger.info("Using VirusTotal data instead of ProductHunt for product information")
+            product_data = self._format_virustotal_as_product_data(virustotal_data)
+        else:
+            product_data = self._gather_product_data(input_text)
         
         # Step 2: Resolve entity (need single-agent for this)
         logger.info("Step 2: Resolving entity identity")
@@ -100,16 +104,42 @@ class SecurityAssessor:
                 "details": "Resolving product and vendor identity..."
             })
         
-        # For entity resolution, use single-agent (quick lookup)
-        if not self.analyzer:
-            self.analyzer = GeminiAnalyzer(self.config.GEMINI_API_KEY, self.config.GEMINI_MODEL)
-        
-        entity_info = self.analyzer.resolve_entity(input_text, product_data, evidence_registry)
+        # If VirusTotal data is available, use it directly for entity info
+        if virustotal_data:
+            logger.info("Using VirusTotal data for entity resolution")
+            entity_info = {
+                'product_name': virustotal_data.get('product') or virustotal_data.get('primary_name'),
+                'vendor': virustotal_data.get('vendor'),
+                'url': virustotal_data.get('source_url'),
+                'aliases': virustotal_data.get('names', [])[:5],  # Limit aliases
+                'confidence': 'high',  # VirusTotal data is highly reliable
+                'evidence_refs': ['virustotal_file_analysis']
+            }
+        else:
+            # For entity resolution, use single-agent (quick lookup)
+            entity_info = self.analyzer.resolve_entity(input_text, product_data, evidence_registry)
         
         product_name = entity_info.get('product_name')
         vendor = entity_info.get('vendor')
         
         logger.info(f"Resolved - Product: {product_name}, Vendor: {vendor}")
+        
+        # Check cache again with resolved product/vendor
+        if use_cache and (product_name or vendor):
+            cached = self.cache.get_assessment(
+                product_name=product_name, 
+                vendor=vendor if not product_name else None,
+                max_age_hours=self.config.CACHE_EXPIRY_HOURS
+            )
+            if cached:
+                logger.info(f"Returning cached assessment for: {product_name or vendor}")
+                if progress_callback:
+                    progress_callback({
+                        "stage": "cache",
+                        "status": "completed",
+                        "details": "Using cached results"
+                    })
+                return cached
         
         # Step 3: Classify software
         logger.info("Step 3: Classifying software")
@@ -135,7 +165,8 @@ class SecurityAssessor:
                 product_data=product_data,
                 security_data=security_data,
                 evidence_registry=evidence_registry,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                virustotal_data=virustotal_data
             )
         else:
             return self._assess_with_single_agent(
@@ -144,7 +175,8 @@ class SecurityAssessor:
                 classification=classification,
                 product_data=product_data,
                 security_data=security_data,
-                evidence_registry=evidence_registry
+                evidence_registry=evidence_registry,
+                virustotal_data=virustotal_data
             )
     
     def _assess_with_multi_agent(
@@ -155,7 +187,8 @@ class SecurityAssessor:
         product_data: Dict,
         security_data: Dict,
         evidence_registry: EvidenceRegistry,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        virustotal_data: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
         Multi-agent assessment workflow with research → verification → synthesis
@@ -173,16 +206,35 @@ class SecurityAssessor:
             entity_info, evidence_registry
         )
         
-        data_compliance = self.analyzer.analyze_data_compliance(
-            entity_info, evidence_registry
-        )
+        # Skip data compliance and deployment controls for vendor-only assessments
+        is_vendor_only = not entity_info.get('product_name')
         
-        deployment_controls = self.analyzer.analyze_deployment_controls(
-            entity_info, classification, evidence_registry
-        )
+        if is_vendor_only:
+            logger.info("Vendor-only assessment: Skipping data compliance and deployment controls")
+            data_compliance = {
+                'not_applicable': True,
+                'reason': 'Data compliance assessment requires a specific product',
+                'data_source': 'not_applicable'
+            }
+            deployment_controls = {
+                'not_applicable': True,
+                'reason': 'Deployment controls assessment requires a specific product',
+                'data_source': 'not_applicable'
+            }
+        else:
+            data_compliance = self.analyzer.analyze_data_compliance(
+                entity_info, evidence_registry
+            )
+            
+            deployment_controls = self.analyzer.analyze_deployment_controls(
+                entity_info, classification, evidence_registry
+            )
         
-        # Run multi-agent verification analysis on vulnerabilities (most critical)
-        logger.info("Running multi-agent verification on vulnerability analysis...")
+        # Determine analysis mode based on data source
+        is_virustotal_analysis = virustotal_data is not None
+        
+        # Run multi-agent verification analysis
+        logger.info(f"Running multi-agent verification - Mode: {'VirusTotal' if is_virustotal_analysis else 'Product/Vendor'}")
         
         multi_agent_result = self.multi_agent.analyze_with_verification(
             entity_info=entity_info,
@@ -192,7 +244,9 @@ class SecurityAssessor:
             incidents=incidents_analysis,
             data_compliance=data_compliance,
             deployment_controls=deployment_controls,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            virustotal_data=virustotal_data,
+            is_virustotal_analysis=is_virustotal_analysis
         )
         
         # Extract verified vulnerability analysis from multi-agent result
@@ -207,19 +261,21 @@ class SecurityAssessor:
                 evidence_registry
             )
         
-        # Calculate rule-based trust score
-        logger.info("Calculating transparent rule-based trust score")
-        
-        scoring_data = {
-            'cves': security_data['cves'],
-            'kevs': security_data['kevs'],
-            'product_data': product_data,
-            'security_practices': security_practices,
-            'incidents': incidents_analysis,
-            'data_compliance': data_compliance
-        }
-        
-        trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
+        # Calculate rule-based trust score (use VirusTotal scorer if applicable)
+        if virustotal_data:
+            logger.info("Calculating VirusTotal-specific trust score")
+            trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
+        else:
+            logger.info("Calculating standard product/vendor trust score")
+            scoring_data = {
+                'cves': security_data['cves'],
+                'kevs': security_data['kevs'],
+                'product_data': product_data,
+                'security_practices': security_practices,
+                'incidents': incidents_analysis,
+                'data_compliance': data_compliance
+            }
+            trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
         
         # Suggest alternatives
         logger.info("Suggesting alternatives")
@@ -241,12 +297,29 @@ class SecurityAssessor:
             deployment_controls=deployment_controls,
             trust_score=trust_score,
             alternatives=alternatives,
-            evidence_registry=evidence_registry
+            evidence_registry=evidence_registry,
+            virustotal_data=virustotal_data
         )
         
         # Add multi-agent metadata
         assessment['_analysis_mode'] = 'multi-agent'
         assessment['_multi_agent_metadata'] = multi_agent_result.get('_multi_agent_metadata', {})
+        
+        # Merge multi-agent citations with evidence registry citations
+        if 'citations' in multi_agent_result:
+            # Add multi-agent citations to the existing citations list
+            existing_citations = assessment.get('citations', [])
+            multi_agent_citations = multi_agent_result['citations']
+            
+            # Combine and deduplicate by URL
+            all_citations = existing_citations.copy()
+            existing_urls = {c.get('url') for c in existing_citations if c.get('url')}
+            
+            for citation in multi_agent_citations:
+                if citation.get('url') not in existing_urls:
+                    all_citations.append(citation)
+            
+            assessment['citations'] = all_citations
         
         # Cache the result
         product_name = entity_info.get('product_name')
@@ -270,7 +343,8 @@ class SecurityAssessor:
         classification: Dict,
         product_data: Dict,
         security_data: Dict,
-        evidence_registry: EvidenceRegistry
+        evidence_registry: EvidenceRegistry,
+        virustotal_data: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
         Traditional single-agent assessment workflow
@@ -296,27 +370,47 @@ class SecurityAssessor:
             entity_info, evidence_registry
         )
         
-        data_compliance = self.analyzer.analyze_data_compliance(
-            entity_info, evidence_registry
-        )
+        # Skip data compliance and deployment controls for vendor-only assessments
+        is_vendor_only = not entity_info.get('product_name')
         
-        deployment_controls = self.analyzer.analyze_deployment_controls(
-            entity_info, classification, evidence_registry
-        )
+        if is_vendor_only:
+            logger.info("Vendor-only assessment: Skipping data compliance and deployment controls")
+            data_compliance = {
+                'not_applicable': True,
+                'reason': 'Data compliance assessment requires a specific product',
+                'data_source': 'not_applicable'
+            }
+            deployment_controls = {
+                'not_applicable': True,
+                'reason': 'Deployment controls assessment requires a specific product',
+                'data_source': 'not_applicable'
+            }
+        else:
+            data_compliance = self.analyzer.analyze_data_compliance(
+                entity_info, evidence_registry
+            )
+            
+            deployment_controls = self.analyzer.analyze_deployment_controls(
+                entity_info, classification, evidence_registry
+            )
         
-        # Step 7: Calculate rule-based trust score
+        # Step 7: Calculate rule-based trust score (use VirusTotal scorer if applicable)
         logger.info("Step 7: Calculating transparent rule-based trust score")
         
-        scoring_data = {
-            'cves': security_data['cves'],
-            'kevs': security_data['kevs'],
-            'product_data': product_data,
-            'security_practices': security_practices,
-            'incidents': incidents_analysis,
-            'data_compliance': data_compliance
-        }
-        
-        trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
+        if virustotal_data:
+            logger.info("Using VirusTotal-specific trust scorer")
+            trust_score = self.virustotal_trust_scorer.calculate_trust_score(virustotal_data)
+        else:
+            logger.info("Using standard product/vendor trust scorer")
+            scoring_data = {
+                'cves': security_data['cves'],
+                'kevs': security_data['kevs'],
+                'product_data': product_data,
+                'security_practices': security_practices,
+                'incidents': incidents_analysis,
+                'data_compliance': data_compliance
+            }
+            trust_score = self.trust_scorer.calculate_trust_score(scoring_data)
         
         # Step 8: Suggest alternatives
         logger.info("Step 8: Suggesting alternatives")
@@ -338,7 +432,8 @@ class SecurityAssessor:
             deployment_controls=deployment_controls,
             trust_score=trust_score,
             alternatives=alternatives,
-            evidence_registry=evidence_registry
+            evidence_registry=evidence_registry,
+            virustotal_data=virustotal_data
         )
         
         # Add single-agent metadata
@@ -385,6 +480,52 @@ class SecurityAssessor:
         except Exception as e:
             logger.error(f"Error gathering product data: {e}")
             return None
+    
+    def _format_virustotal_as_product_data(self, virustotal_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Format VirusTotal data to match ProductHunt data structure"""
+        
+        # Extract meaningful description from VirusTotal data
+        description_parts = []
+        
+        if virustotal_data.get('type'):
+            description_parts.append(f"File type: {virustotal_data['type']}")
+        
+        signature = virustotal_data.get('signature', {})
+        if signature and signature.get('description'):
+            description_parts.append(signature['description'])
+        elif signature and signature.get('product'):
+            description_parts.append(signature['product'])
+        
+        # Add detection information
+        detection_stats = virustotal_data.get('detection_stats', {})
+        malicious = detection_stats.get('malicious', 0)
+        suspicious = detection_stats.get('suspicious', 0)
+        
+        if malicious > 0:
+            description_parts.append(f"⚠️ {malicious} antivirus engines detected this as malicious")
+        elif suspicious > 0:
+            description_parts.append(f"⚠️ {suspicious} antivirus engines flagged this as suspicious")
+        else:
+            description_parts.append("✓ No malicious detections reported")
+        
+        description = ". ".join(description_parts) if description_parts else "File analyzed by VirusTotal"
+        
+        # Create a ProductHunt-like data structure
+        return {
+            'name': virustotal_data.get('product') or virustotal_data.get('primary_name'),
+            'description': description,
+            'tagline': f"Verified by VirusTotal - Detection ratio: {virustotal_data.get('detection_ratio', 'N/A')}",
+            'url': virustotal_data.get('source_url'),
+            'website': None,
+            'votes': 0,
+            'comments': 0,
+            'created_at': virustotal_data.get('last_analysis_date'),
+            'topics': virustotal_data.get('tags', []),
+            'makers': [virustotal_data.get('vendor')] if virustotal_data.get('vendor') else [],
+            'source': 'VirusTotal',
+            'source_type': 'independent',
+            '_virustotal_analysis': True  # Flag to indicate this came from VirusTotal
+        }
     
     def _gather_security_data(self, vendor: str, product: Optional[str] = None) -> Dict[str, Any]:
         """Gather CVE and KEV data from NVD and CISA"""
@@ -446,7 +587,7 @@ class SecurityAssessor:
                           vuln_analysis: Dict, security_practices: Dict,
                           incidents: Dict, data_compliance: Dict,
                           deployment_controls: Dict, trust_score: Dict,
-                          alternatives: list, evidence_registry=None) -> Dict[str, Any]:
+                          alternatives: list, evidence_registry=None, virustotal_data: Optional[Dict] = None) -> Dict[str, Any]:
         """Compile all information into final assessment"""
         
         # Get evidence summary and citations
@@ -463,8 +604,10 @@ class SecurityAssessor:
             'metadata': {
                 'timestamp': datetime.now().isoformat(),
                 'version': '1.0',
-                'input_query': entity_info.get('product_name'),
-                'evidence_hash': evidence_hash
+                'input_query': entity_info.get('product_name') or entity_info.get('vendor'),
+                'assessment_type': 'product' if entity_info.get('product_name') else 'vendor',
+                'evidence_hash': evidence_hash,
+                'virustotal_analysis': True if virustotal_data else False
             },
             'entity': {
                 'product_name': entity_info.get('product_name'),
@@ -529,6 +672,9 @@ class SecurityAssessor:
                 'evidence_refs': incidents.get('evidence_refs', [])
             },
             'data_compliance': {
+                'not_applicable': data_compliance.get('not_applicable', False),
+                'reason': data_compliance.get('reason'),
+                'data_source': data_compliance.get('data_source'),
                 'status': data_compliance.get('status'),
                 'certifications': data_compliance.get('certifications', []),
                 'gdpr_compliant': data_compliance.get('gdpr_compliant'),
@@ -538,6 +684,9 @@ class SecurityAssessor:
                 'evidence_refs': data_compliance.get('evidence_refs', [])
             },
             'deployment_controls': {
+                'not_applicable': deployment_controls.get('not_applicable', False),
+                'reason': deployment_controls.get('reason'),
+                'data_source': deployment_controls.get('data_source'),
                 'sso_support': deployment_controls.get('sso_support'),
                 'mfa_support': deployment_controls.get('mfa_support'),
                 'rbac_available': deployment_controls.get('rbac_available'),
@@ -549,64 +698,56 @@ class SecurityAssessor:
                 'evidence_refs': deployment_controls.get('evidence_refs', [])
             },
             'alternatives': alternatives,
-            'recommendations': self._generate_recommendations(trust_score, vuln_analysis, incidents),
-            'sources': self._compile_sources(product_data, security_data),
+            'sources': self._compile_sources(product_data, security_data, virustotal_data),
             'evidence_summary': evidence_summary,
             'citations': citations
         }
         
+        # Add VirusTotal data if available
+        if virustotal_data:
+            assessment['virustotal'] = {
+                'file_hash': {
+                    'sha1': virustotal_data.get('sha1'),
+                    'sha256': virustotal_data.get('sha256'),
+                    'md5': virustotal_data.get('md5')
+                },
+                'file_info': {
+                    'primary_name': virustotal_data.get('primary_name'),
+                    'names': virustotal_data.get('names', [])[:5],  # Limit to 5 names
+                    'type': virustotal_data.get('type'),
+                    'size': virustotal_data.get('size'),
+                    'last_analysis_date': virustotal_data.get('last_analysis_date')
+                },
+                'detection': {
+                    'ratio': virustotal_data.get('detection_ratio'),
+                    'stats': virustotal_data.get('detection_stats', {}),
+                    'malicious': virustotal_data.get('detection_stats', {}).get('malicious', 0),
+                    'suspicious': virustotal_data.get('detection_stats', {}).get('suspicious', 0),
+                    'undetected': virustotal_data.get('detection_stats', {}).get('undetected', 0),
+                    'harmless': virustotal_data.get('detection_stats', {}).get('harmless', 0)
+                },
+                'signature': virustotal_data.get('signature'),
+                'threat_classification': virustotal_data.get('threat_classification'),
+                'tags': virustotal_data.get('tags', []),
+                'source_url': virustotal_data.get('source_url')
+            }
+        
         return assessment
     
-    def _generate_recommendations(self, trust_score: Dict, vuln_analysis: Dict, incidents: Dict) -> list:
-        """Generate actionable recommendations"""
-        
-        recommendations = []
-        
-        score = trust_score.get('total_score', 50)
-        risk_level = trust_score.get('risk_level', 'medium')
-        
-        if score < 40 or risk_level == 'critical':
-            recommendations.append({
-                'priority': 'CRITICAL',
-                'action': 'Do not approve without thorough security review',
-                'reason': 'Low trust score indicates significant security concerns'
-            })
-        elif score < 60 or risk_level == 'high':
-            recommendations.append({
-                'priority': 'HIGH',
-                'action': 'Require vendor security assessment and remediation plan',
-                'reason': 'Multiple security concerns identified'
-            })
-        else:
-            recommendations.append({
-                'priority': 'MEDIUM',
-                'action': 'Proceed with standard security review',
-                'reason': 'Acceptable security posture with manageable risks'
-            })
-        
-        # KEV-specific recommendation
-        if vuln_analysis.get('exploitation_risk') in ['high', 'critical']:
-            recommendations.append({
-                'priority': 'CRITICAL',
-                'action': 'Verify all KEV vulnerabilities are patched',
-                'reason': 'Known exploited vulnerabilities present'
-            })
-        
-        # Incident-specific recommendations
-        incident_severity = incidents.get('severity', 'none')
-        if incident_severity in ['high', 'critical']:
-            recommendations.append({
-                'priority': 'HIGH',
-                'action': 'Review incident response history and vendor transparency',
-                'reason': f'Vendor has history of {incident_severity} severity security incidents'
-            })
-        
-        return recommendations
-    
-    def _compile_sources(self, product_data: Optional[Dict], security_data: Dict) -> list:
+    def _compile_sources(self, product_data: Optional[Dict], security_data: Dict, virustotal_data: Optional[Dict] = None) -> list:
         """Compile list of data sources with timestamps"""
         
         sources = []
+        
+        # VirusTotal should be first if available (primary source for SHA1 lookups)
+        if virustotal_data:
+            sources.append({
+                'name': 'VirusTotal',
+                'type': 'File Analysis & Threat Intelligence',
+                'url': virustotal_data.get('source_url'),
+                'description': f"File hash analysis with {virustotal_data.get('detection_ratio', '0/0')} detection ratio",
+                'timestamp': datetime.now().isoformat()
+            })
         
         if product_data:
             sources.append({
