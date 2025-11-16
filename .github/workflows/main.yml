@@ -48,12 +48,12 @@ jobs:
           region: ${{ env.REGION }}
           image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE_NAME }}/app-rehension:${{ github.sha }}
           # Optionally, you can add other Cloud Run configurations here, e.g.:
-          env_vars:
-            GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-            PRODUCTHUNT_API_KEY: ${{ secrets.PRODUCTHUNT_API_KEY }}
-            VIRUSTOTAL_API_KEY: ${{ secrets.VIRUSTOTAL_API_KEY }}
-            NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-            DATABASE_PATH: /data/cache.json
+          env_vars: |
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }},
+            PRODUCTHUNT_API_KEY=${{ secrets.PRODUCTHUNT_API_KEY }},
+            VIRUSTOTAL_API_KEY=${{ secrets.VIRUSTOTAL_API_KEY }},
+            NVD_API_KEY=${{ secrets.NVD_API_KEY }},
+            DATABASE_PATH=/data/cache.json
           #   MY_ENV_VAR=my_value
           # concurrency: 80
           # cpu: 1
