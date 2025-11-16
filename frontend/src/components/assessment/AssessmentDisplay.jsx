@@ -3,6 +3,7 @@ import CombinedGraphs from './CombinedGraphs';
 import CompactEntityHeader from './CompactEntityHeader';
 import ExpandableCard from './ExpandableCard';
 import VirusTotalDisplay from './VirusTotalDisplay';
+import MITREAttackDisplay from './MITREAttackDisplay';
 import {
   ScoringBreakdownContent,
   SecurityPostureContent,
@@ -47,6 +48,14 @@ function AssessmentDisplay({ assessment }) {
     assessment.input_type === 'sha1';
 
   console.log('isVirusTotalAssessment:', isVirusTotalAssessment);
+
+  // Debug MITRE ATT&CK data
+  console.log('Assessment has MITRE ATT&CK:', {
+    hasMitreAttack: !!assessment.mitre_attack,
+    mitreAvailable: assessment.mitre_attack?.available,
+    techniqueCount: assessment.mitre_attack?.techniques?.length,
+    keys: Object.keys(assessment)
+  });
 
   // Check if this result is from cache
   const isFromCache = assessment._input_metadata?._from_cache || assessment.metadata?.from_cache;
@@ -223,6 +232,11 @@ function AssessmentDisplay({ assessment }) {
           <MetadataContent assessment={assessment} />
         </ExpandableCard>
       </div>
+
+      {/* MITRE ATT&CK Framework - Full Width Below Cards */}
+      {assessment.mitre_attack && assessment.mitre_attack.available && (
+        <MITREAttackDisplay mitreData={assessment.mitre_attack} />
+      )}
     </div>
   );
 }

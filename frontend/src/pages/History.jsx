@@ -250,7 +250,7 @@ function History() {
                       <div className="p-4 border-t border-border flex gap-2">
                         <button 
                           onClick={() => handleView(assessment)}
-                          className="flex-1 px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors text-sm font-medium"
+                          className="flex-1 px-6 py-4 gap-2 bg-violet-600 text-white rounded-lg hover:bg-violet-700 transition-colors font-medium text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           View Details
                         </button>

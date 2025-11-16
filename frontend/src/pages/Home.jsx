@@ -41,7 +41,7 @@ function Home({
           <div className="absolute -inset-1 bg-gradient-to-r from-purple-600 to-pink-600 rounded-full blur opacity-20 "></div>
         </div>
         <p className="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto font-light mb-2">
-          Because trust shouldn't be <span className="text-purple-400 font-semibold">guesswork</span>.
+          The fastest way to <span className="text-purple-400 font-semibold">arrest</span> software risks.
         </p>
         <p className="text-sm text-gray-400 max-w-2xl mx-auto">
           AI-powered security assessments with multi-agent verification • Real-time vulnerability tracking • Trust scoring you can rely on
